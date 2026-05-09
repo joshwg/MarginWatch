@@ -1,0 +1,99 @@
+"""Builds a single position row widget and computes its display values."""
+
+from __future__ import annotations
+
+import tkinter as tk
+from typing import Callable
+
+import constants
+from models import Position
+from services.cache_service import CacheService
+import services.position_service as ps
+import ui.styles as styles
+from ui.tooltip import Tooltip
+
+
+def compute_display(pos: Position, cache: CacheService) -> dict:
+    """Compute all display values for one position row."""
+    ot = ps.pricing_option_type(pos)
+    key = (pos.symbol, pos.expiration, pos.strike, ot)
+    price = cache.price(pos.symbol)
+    opt_price = cache.opt_price(key) if pos.strike else None
+    theta = cache.theta(key) if pos.strike else None
+    td = ps.theta_dollars(pos, theta)
+    days = ps.days_to_expiry(pos)
+    bg = styles.expiry_color(days)
+    return {
+        "abbrev": ps.position_abbrev(pos),
+        "qty": ps.display_quantity(pos),
+        "margin": ps.margin_k(pos),
+        "bg": bg,
+        "fg": styles.text_color(bg),
+        "price": price,
+        "itm": ps.is_itm(pos, price),
+        "opt_str": f"{opt_price:.2f}" if opt_price is not None else "—",
+        "theta_dollars": td,
+        "theta_str": f"${round(td):d}" if td is not None else "—",
+        "is_stock_row": ps.is_stock(pos),
+        "is_profitable": ps.is_profitable(pos, price),
+    }
+
+
+def build_row(
+    parent: tk.Frame,
+    pos: Position,
+    display: dict,
+    mergeable_symbols: set[str],
+    seen_stock_symbols: set[str],
+    on_edit: Callable[[int], None],
+    on_delete: Callable[[int], None],
+    on_merge: Callable[[str], None],
+) -> tk.Frame:
+    """Create and return a tk.Frame representing one position row."""
+    bg = display["bg"]
+    fg = display["fg"]
+    row_frame = tk.Frame(parent, bg=bg)
+    row_frame.pack(fill=tk.X, pady=1)
+
+    if display["price"] is not None:
+        Tooltip(row_frame, f"{pos.symbol} last: ${display['price']:.2f}")
+
+    # ITM indicator swatch
+    itm_canvas = tk.Canvas(row_frame, width=6, height=16, bg=bg, highlightthickness=0)
+    if display["itm"]:
+        itm_canvas.create_rectangle(1, 2, 5, 14, fill=constants.ITM_INDICATOR, outline="")
+    itm_canvas.pack(side=tk.LEFT)
+
+    # Profit indicator swatch
+    profit_canvas = tk.Canvas(row_frame, width=6, height=16, bg=bg, highlightthickness=0)
+    if display["is_profitable"]:
+        profit_canvas.create_rectangle(1, 2, 5, 14, fill=constants.PROFIT_INDICATOR, outline="")
+    profit_canvas.pack(side=tk.LEFT)
+
+    pos_font = ("TkDefaultFont", 8, "underline") if display["is_stock_row"] else ("TkDefaultFont", 8)
+    tk.Label(row_frame, text=display["abbrev"], bg=bg, fg=fg,
+             anchor=tk.W, width=17, font=pos_font).pack(side=tk.LEFT)
+    tk.Label(row_frame, text=str(display["qty"]), bg=bg, fg=fg,
+             width=5, anchor=tk.CENTER).pack(side=tk.LEFT)
+    tk.Label(row_frame, text=f"{display['margin']:.1f}", bg=bg, fg=fg,
+             width=7, anchor=tk.E).pack(side=tk.LEFT)
+    tk.Label(row_frame, text=display["opt_str"], bg=bg, fg=fg,
+             width=6, anchor=tk.E).pack(side=tk.LEFT)
+    tk.Label(row_frame, text=display["theta_str"], bg=bg, fg=fg,
+             width=6, anchor=tk.E).pack(side=tk.LEFT)
+
+    row_id = pos.id
+    sym = pos.symbol
+    btn_frame = tk.Frame(row_frame, bg=bg)
+    btn_frame.pack(side=tk.LEFT, padx=2)
+    tk.Button(btn_frame, text="✎", width=1, pady=0, font=("TkDefaultFont", 7),
+              command=lambda rid=row_id: on_edit(rid)).pack(side=tk.LEFT)
+    tk.Button(btn_frame, text="✕", width=1, pady=0, font=("TkDefaultFont", 7),
+              command=lambda rid=row_id: on_delete(rid)).pack(side=tk.LEFT)
+    if ps.is_stock(pos) and sym in mergeable_symbols:
+        if sym not in seen_stock_symbols:
+            tk.Button(btn_frame, text="⊕", width=1, pady=0, font=("TkDefaultFont", 7),
+                      command=lambda s=sym: on_merge(s)).pack(side=tk.LEFT)
+        seen_stock_symbols.add(sym)
+
+    return row_frame
