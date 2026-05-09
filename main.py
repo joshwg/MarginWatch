@@ -43,14 +43,17 @@ class _Tooltip:
     def _show(self, event=None):
         if self._tip:
             return
-        x = self._widget.winfo_rootx() + 20
-        y = self._widget.winfo_rooty() + self._widget.winfo_height() + 2
         self._tip = tk.Toplevel(self._widget)
         self._tip.wm_overrideredirect(True)
+        lbl = tk.Label(self._tip, text=self._text, background="#ffffe0",
+                       relief="solid", borderwidth=1,
+                       font=("TkDefaultFont", 8))
+        lbl.pack()
+        self._tip.update_idletasks()
+        tip_h = self._tip.winfo_reqheight()
+        x = event.x_root + 10 if event else self._widget.winfo_rootx() + 10
+        y = (event.y_root if event else self._widget.winfo_rooty()) - tip_h - 4
         self._tip.wm_geometry(f"+{x}+{y}")
-        tk.Label(self._tip, text=self._text, background="#ffffe0",
-                 relief="solid", borderwidth=1,
-                 font=("TkDefaultFont", 8)).pack()
 
     def _hide(self, event=None):
         if self._tip:
@@ -79,6 +82,7 @@ class PositionDialog(tk.Toplevel):
         self.geometry(f"+{x}+{y}")
         self.focus_force()
         self.grab_set()
+        self._sym_entry.focus_set()
         self.wait_window(self)
 
     def _build(self, row):
@@ -165,7 +169,6 @@ class PositionDialog(tk.Toplevel):
 
         self._on_type_change()
         self.bind("<Return>", lambda _: self._save())
-        self._sym_entry.focus_set()
 
     def _exp_plus_day(self, _event=None):
         self._date_entry.set_date(self._date_entry.get_date() + timedelta(days=1))
@@ -356,7 +359,7 @@ class MarginWatchApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("MarginWatch")
-        self.geometry("380x600")
+        self.geometry("380x800")
         self.resizable(False, False)
 
         db.init_db()
@@ -453,7 +456,7 @@ class MarginWatchApp(tk.Tk):
         # Column headers
         hdr = ttk.Frame(self._rows_frame)
         hdr.pack(fill=tk.X)
-        for text, w in [("Position", 110), ("#", 28), ("Margin", 58),
+        for text, w in [("Position", 125), ("#", 28), ("Margin", 58),
                         ("$/shr", 52), ("", 44)]:
             ttk.Label(hdr, text=text, width=w // 7, relief="groove",
                       anchor=tk.CENTER).pack(side=tk.LEFT)
@@ -559,11 +562,14 @@ class MarginWatchApp(tk.Tk):
                 tip_text = f"{row['symbol']} last: ${price:.2f}"
                 _Tooltip(row_frame, tip_text)
 
+            fg = pd_.text_color(bg)
+
             # ITM indicator: small yellow rectangle canvas
             itm_canvas = tk.Canvas(row_frame, width=6, height=16,
                                    bg=bg, highlightthickness=0)
             if itm:
-                itm_canvas.create_rectangle(1, 2, 5, 14, fill="#ffd700", outline="")
+                #  fill="#ffd700" old color
+                itm_canvas.create_rectangle(1, 2, 5, 14, fill="#8A2BE2", outline="")
             itm_canvas.pack(side=tk.LEFT)
 
             # Profit indicator: green bar when stock price > cost basis
@@ -576,16 +582,18 @@ class MarginWatchApp(tk.Tk):
                 and price > row["long_cost"]
             )
             if is_profitable:
-                profit_canvas.create_rectangle(1, 2, 5, 14, fill="#00cc44", outline="")
+                profit_canvas.create_rectangle(1, 2, 5, 14, fill="#d6109b", outline="")
             profit_canvas.pack(side=tk.LEFT)
 
-            tk.Label(row_frame, text=abbrev, bg=bg, anchor=tk.W,
-                     width=15, font=("TkDefaultFont", 8)).pack(side=tk.LEFT)
-            tk.Label(row_frame, text=str(qty), bg=bg, width=5,
+            is_stock_row = row["option_type"] == "STOCK"
+            pos_font = ("TkDefaultFont", 8, "underline") if is_stock_row else ("TkDefaultFont", 8)
+            tk.Label(row_frame, text=abbrev, bg=bg, fg=fg, anchor=tk.W,
+                     width=17, font=pos_font).pack(side=tk.LEFT)
+            tk.Label(row_frame, text=str(qty), bg=bg, fg=fg, width=5,
                      anchor=tk.CENTER).pack(side=tk.LEFT)
-            tk.Label(row_frame, text=f"{margin:.1f}", bg=bg, width=7,
+            tk.Label(row_frame, text=f"{margin:.1f}", bg=bg, fg=fg, width=7,
                      anchor=tk.E).pack(side=tk.LEFT)
-            tk.Label(row_frame, text=opt_str, bg=bg, width=6,
+            tk.Label(row_frame, text=opt_str, bg=bg, fg=fg, width=6,
                      anchor=tk.E).pack(side=tk.LEFT)
 
             row_id = row["id"]
@@ -611,7 +619,11 @@ class MarginWatchApp(tk.Tk):
         max_margin = float(self._config.get("MaximumMarginBasis", "250000"))
         multiplier = float(self._config.get("MarginMultiplier", "1.5"))
         avail = (max_margin / 1000) * multiplier - total_margin
-        self._avail_lbl.config(text=f"${avail:.1f}k")
+        self._avail_lbl.config(
+            text=f"${avail:.1f}k",
+            foreground="red" if avail < 0 else "",
+            font=("TkDefaultFont", 9, "bold") if avail < 0 else ("TkDefaultFont", 9),
+        )
 
     # ------------------------------------------------------------------
     # CRUD

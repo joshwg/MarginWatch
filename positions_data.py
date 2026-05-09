@@ -28,12 +28,12 @@ def position_abbrev(row) -> str:
         exp = date.fromisoformat(row["expiration"])
         strike = row["strike"]
         strike_str = str(int(strike)) if strike == int(strike) else str(strike)
-        return f"{sym} {exp.strftime('%y-%m-%d')} {strike_str}c"
+        return f"{sym}{exp.strftime('%y-%m-%d')} {strike_str}c"
     exp = date.fromisoformat(row["expiration"])
     cp = "c" if row["option_type"] == "CALL" else "p"
     strike = row["strike"]
     strike_str = str(int(strike)) if strike == int(strike) else str(strike)
-    return f"{sym} {exp.strftime('%y-%m-%d')} {strike_str}{cp}"
+    return f"{sym}{exp.strftime('%y-%m-%d')} {strike_str}{cp}"
 
 
 def days_to_expiry(row) -> int:
@@ -44,16 +44,26 @@ def days_to_expiry(row) -> int:
 
 
 def expiry_color(days: int) -> str:
-    if days <= 7:
-        return "#c8f0c8"   # pale green
+    if days < 0:
+        return "#5C5A97"   # a purple — already expired
+    elif days <= 7:
+        return "#A5CDAA"   # a green
     elif days <= 14:
-        return "#ffffc0"   # pale yellow
+        return "#F2E1A9"   # a yellow
     elif days <= 21:
-        return "#ffc8c8"   # pale red / pink
+        return "#ffc8c8"   # a red / pink
     elif days <= 28:
-        return "#c8dcf0"   # pale blue
+        return "#4682B4"   # a blue
     else:
         return "#d4d4d4"   # gray
+
+
+def text_color(bg_hex: str) -> str:
+    """Return '#000000' or '#ffffff' for readable contrast on bg_hex."""
+    h = bg_hex.lstrip("#")
+    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    brightness = (r * 299 + g * 587 + b * 114) / 1000
+    return "#000000" if brightness > 155 else "#ffffff"
 
 
 def margin_k(row) -> float:
