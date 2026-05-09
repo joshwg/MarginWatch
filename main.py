@@ -359,7 +359,7 @@ class MarginWatchApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("MarginWatch")
-        self.geometry("380x800")
+        self.geometry("460x800")
         self.resizable(False, False)
 
         db.init_db()
@@ -367,6 +367,8 @@ class MarginWatchApp(tk.Tk):
 
         # Price cache: symbol -> last price
         self._price_cache: dict = {}
+        # Theta cache: (symbol, expiration, strike, option_type) -> theta
+        self._theta_cache: dict = {}
 
         self._build_ui()
         self._refresh_positions()
@@ -422,6 +424,9 @@ class MarginWatchApp(tk.Tk):
         ttk.Label(info_frame, text="Avail:", anchor=tk.W).grid(row=1, column=0, sticky=tk.W)
         self._avail_lbl = ttk.Label(info_frame, text="$0.0k", anchor=tk.E, width=8)
         self._avail_lbl.grid(row=1, column=1, sticky=tk.E)
+        ttk.Label(info_frame, text="Theta:", anchor=tk.W).grid(row=2, column=0, sticky=tk.W)
+        self._theta_lbl = ttk.Label(info_frame, text="$0/day", anchor=tk.E, width=8)
+        self._theta_lbl.grid(row=2, column=1, sticky=tk.E)
 
         # Middle: sort radio buttons
         sort_frame = ttk.Frame(top_bar)
@@ -457,7 +462,7 @@ class MarginWatchApp(tk.Tk):
         hdr = ttk.Frame(self._rows_frame)
         hdr.pack(fill=tk.X)
         for text, w in [("Position", 125), ("#", 28), ("Margin", 58),
-                        ("$/shr", 52), ("", 44)]:
+                        ("$/shr", 52), ("Theta", 42), ("", 44)]:
             ttk.Label(hdr, text=text, width=w // 7, relief="groove",
                       anchor=tk.CENTER).pack(side=tk.LEFT)
 
@@ -468,23 +473,23 @@ class MarginWatchApp(tk.Tk):
         config_frame.pack(fill=tk.X, padx=4, pady=(4, 6))
 
         ttk.Label(config_frame, text="Max Margin ($1k increments):").grid(
-            row=0, column=0, sticky=tk.W, padx=6, pady=(6, 2))
+            row=0, column=0, sticky=tk.W, padx=6, pady=(6, 4))
         initial_margin = int(self._config.get("MaximumMarginBasis", "250000"))
         self._margin_var = tk.StringVar(value=str(initial_margin))
         ttk.Spinbox(config_frame, from_=0, to=10_000_000, increment=1000,
                     textvariable=self._margin_var, width=10).grid(
-            row=1, column=0, padx=6, pady=(0, 4), sticky=tk.W)
+            row=0, column=1, padx=6, pady=(6, 4), sticky=tk.W)
 
         ttk.Label(config_frame, text="Margin Multiplier (0.5 – 4.0):").grid(
-            row=2, column=0, sticky=tk.W, padx=6, pady=(2, 2))
+            row=1, column=0, sticky=tk.W, padx=6, pady=(2, 4))
         initial_mult = float(self._config.get("MarginMultiplier", "1.5"))
         self._multiplier_var = tk.StringVar(value=f"{initial_mult:.1f}")
         ttk.Spinbox(config_frame, from_=0.5, to=4.0, increment=0.1,
                     textvariable=self._multiplier_var, width=6,
-                    format="%.1f").grid(row=3, column=0, padx=6, pady=(0, 4), sticky=tk.W)
+                    format="%.1f").grid(row=1, column=1, padx=6, pady=(2, 4), sticky=tk.W)
 
         ttk.Button(config_frame, text="Save",
-                   command=self._save_config).grid(row=4, column=0, padx=6,
+                   command=self._save_config).grid(row=2, column=0, columnspan=2, padx=6,
                                                    pady=(0, 8), sticky=tk.E)
 
     def _on_frame_configure(self, _event=None):
@@ -504,6 +509,17 @@ class MarginWatchApp(tk.Tk):
             if sym not in self._price_cache:
                 self._price_cache[sym] = pd_.fetch_last_price(sym)
 
+    def _fetch_theta(self, rows):
+        for r in rows:
+            # Skip STOCK rows with no covered call written
+            if r["option_type"] == "STOCK" and not r["strike"]:
+                continue
+            ot = "CALL" if r["option_type"] == "STOCK" else r["option_type"]
+            key = (r["symbol"], r["expiration"], r["strike"], ot)
+            if key not in self._theta_cache:
+                self._theta_cache[key] = pd_.fetch_option_theta(
+                    r["symbol"], r["expiration"], r["strike"], ot)
+
     def _refresh_positions(self):
         with db.get_connection() as conn:
             pd_.cleanup_expired(conn)
@@ -518,6 +534,7 @@ class MarginWatchApp(tk.Tk):
             rows = sorted(rows, key=lambda r: (r["expiration"], r["symbol"]))
 
         self._fetch_prices(rows)
+        self._fetch_theta(rows)
 
         # Clear existing row widgets (skip header frame at index 0)
         for w in self._row_widgets:
@@ -525,6 +542,7 @@ class MarginWatchApp(tk.Tk):
         self._row_widgets.clear()
 
         total_margin = 0.0
+        total_theta_day = 0.0  # daily $ theta (per contract = theta * 100)
 
         # Find symbols with 2+ OPEN STOCK rows
         stock_symbol_counts = Counter(
@@ -545,13 +563,24 @@ class MarginWatchApp(tk.Tk):
             price = self._price_cache.get(row["symbol"])
             itm = pd_.is_itm(row, price)
 
-            # Fetch option last price for display
+            # Fetch option last price and theta for display
             opt_price = None
-            if row["option_type"] != "STOCK" and row["strike"]:
+            theta = None
+            ot = "CALL" if row["option_type"] == "STOCK" else row["option_type"]
+            if row["strike"]:
                 opt_price = pd_.fetch_option_last_price(
                     row["symbol"], row["expiration"],
-                    row["strike"], row["option_type"])
+                    row["strike"], ot)
+                key = (row["symbol"], row["expiration"], row["strike"], ot)
+                theta = self._theta_cache.get(key)
             opt_str = f"{opt_price:.2f}" if opt_price is not None else "—"
+            # Theta per day in dollars for this position (theta is per share, * 100 * contracts)
+            # Negate because we are short these contracts (positive quantity = short)
+            theta_dollars = None
+            if theta is not None:
+                theta_dollars = -theta * 100 * row["quantity"]
+                total_theta_day += theta_dollars
+            theta_str = f"${round(theta_dollars):d}" if theta_dollars is not None else "—"
 
             row_frame = tk.Frame(self._rows_frame, bg=bg)
             row_frame.pack(fill=tk.X, pady=1)
@@ -595,6 +624,8 @@ class MarginWatchApp(tk.Tk):
                      anchor=tk.E).pack(side=tk.LEFT)
             tk.Label(row_frame, text=opt_str, bg=bg, fg=fg, width=6,
                      anchor=tk.E).pack(side=tk.LEFT)
+            tk.Label(row_frame, text=theta_str, bg=bg, fg=fg, width=6,
+                     anchor=tk.E).pack(side=tk.LEFT)
 
             row_id = row["id"]
             sym = row["symbol"]
@@ -616,6 +647,7 @@ class MarginWatchApp(tk.Tk):
                 seen_stock_symbols.add(sym)
 
         self._total_lbl.config(text=f"${total_margin:.1f}k")
+        self._theta_lbl.config(text=f"${round(total_theta_day):d}/d")
         max_margin = float(self._config.get("MaximumMarginBasis", "250000"))
         multiplier = float(self._config.get("MarginMultiplier", "1.5"))
         avail = (max_margin / 1000) * multiplier - total_margin
@@ -646,6 +678,7 @@ class MarginWatchApp(tk.Tk):
                 )
                 conn.commit()
             self._price_cache.pop(d["symbol"], None)
+            self._theta_cache = {k: v for k, v in self._theta_cache.items() if k[0] != d["symbol"]}
             self._refresh_positions()
 
     def _edit_position(self, row_id: int):
@@ -669,6 +702,7 @@ class MarginWatchApp(tk.Tk):
                 )
                 conn.commit()
             self._price_cache.pop(d["symbol"], None)
+            self._theta_cache = {k: v for k, v in self._theta_cache.items() if k[0] != d["symbol"]}
             self._refresh_positions()
 
     def _merge_stock(self, symbol: str):

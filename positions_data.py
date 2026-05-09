@@ -12,6 +12,7 @@ STOCK : long stock
 from datetime import date
 
 import yfinance as yf
+from option_lib.yahoo_data import fetch_option_theta as _lib_fetch_option_theta
 
 
 # ---------------------------------------------------------------------------
@@ -115,6 +116,12 @@ def fetch_option_last_price(symbol: str, expiration_iso: str,
     except Exception:
         pass
     return None
+
+
+def fetch_option_theta(symbol: str, expiration_iso: str,
+                       strike: float, option_type: str):
+    """Return theta (daily $ decay per share) for the given contract, or None."""
+    return _lib_fetch_option_theta(symbol, expiration_iso, strike, option_type)
 
 
 def is_itm(row, current_price) -> bool:
