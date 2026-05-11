@@ -80,11 +80,12 @@ class MarginWatchApp(tk.Tk):
         # Middle: sort radio buttons
         sort_frame = ttk.Frame(top_bar)
         sort_frame.pack(side=tk.LEFT, padx=(20, 0))
-        self._sort_var = tk.StringVar(value="alpha")
+        initial_sort = self._config.get("SortOrder", "alpha")
+        self._sort_var = tk.StringVar(value=initial_sort)
         ttk.Radiobutton(sort_frame, text="A-Z", variable=self._sort_var,
-                        value="alpha", command=self._refresh_positions).pack(anchor=tk.W)
+                        value="alpha", command=self._on_sort_change).pack(anchor=tk.W)
         ttk.Radiobutton(sort_frame, text="Exp", variable=self._sort_var,
-                        value="expiry", command=self._refresh_positions).pack(anchor=tk.W)
+                        value="expiry", command=self._on_sort_change).pack(anchor=tk.W)
 
         # Right: + button
         plus_frame = ttk.Frame(top_bar)
@@ -152,6 +153,10 @@ class MarginWatchApp(tk.Tk):
     # ------------------------------------------------------------------
     # Positions refresh
     # ------------------------------------------------------------------
+
+    def _on_sort_change(self):
+        cfg_repo.save_sort(self._sort_var.get())
+        self._refresh_positions()
 
     def _load_sorted_positions(self) -> list:
         rows = pos_repo.get_open_positions()

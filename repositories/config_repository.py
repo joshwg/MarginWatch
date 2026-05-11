@@ -22,3 +22,13 @@ def save(max_margin: int, multiplier: float) -> None:
             ("MarginMultiplier", str(multiplier)),
         )
         conn.commit()
+
+
+def save_sort(sort_key: str) -> None:
+    """Persist the sort choice (e.g. 'alpha' or 'expiry') to the config table."""
+    with db.get_connection() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO config (name, value) VALUES (?, ?)",
+            ("SortOrder", sort_key),
+        )
+        conn.commit()
