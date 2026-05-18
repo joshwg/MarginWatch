@@ -250,6 +250,7 @@ class MarginWatchApp(tk.Tk):
         self._refreshing = True
         self._refresh_pending = False
         positions = self._load_sorted_positions()
+        self._do_refresh_positions(positions)
         threading.Thread(target=self._bg_fetch, args=(positions,), daemon=True).start()
 
     def _bg_fetch(self, positions):
@@ -402,8 +403,8 @@ class MarginWatchApp(tk.Tk):
         wb = openpyxl.Workbook()
         ws = wb.active
         ws.title = "Positions"
-        # A=Position  B=Margin($k)  C=Qty  D=Per-Share Theta  E=Position Theta($)  F=Expiration
-        ws.append(["Position", "Margin ($k)", "Qty", "Per-Share Theta", "Position Theta ($)", "Expiration"])
+        # A=Position  B=Margin($k)  C=Qty  D=Position Theta($)  E=Expiration  F=Per-Share Theta
+        ws.append(["Position", "Margin ($k)", "Qty", "Position Theta ($)", "Expiration", "Per-Share Theta"])
 
         excel_row = 2  # header is row 1; data starts at row 2
         row_count = 0
@@ -413,20 +414,20 @@ class MarginWatchApp(tk.Tk):
                 stock_label = f"{pos.symbol} stock ({pos.long_shares or 0} sh)"
                 stock_margin = round(ps.margin_k(pos), 2)
                 if ps.has_covered_call(pos):
-                    # Row 1: long stock leg — no theta
-                    ws.append([stock_label, 0, pos.long_shares or 0, 0, 0, ""])
+                    # Row 1: long stock leg — margin lives here
+                    ws.append([stock_label, stock_margin, pos.long_shares or 0, 0, 0, ""])
                     excel_row += 1
                     row_count += 1
-                    # Row 2: covered call leg — margin + formula theta
+                    # Row 2: covered call leg — theta only, no margin
                     key = (pos.symbol, pos.expiration, pos.strike, "CALL")
                     raw_theta = self._cache.theta(key)
                     ws.append([
                         ps.position_abbrev(pos),
-                        stock_margin,
+                        0,
                         pos.quantity,
-                        round(raw_theta, 4) if raw_theta is not None else "",
-                        f"=-D{excel_row}*C{excel_row}*100" if raw_theta is not None else "",
+                        f"=-F{excel_row}*C{excel_row}*100" if raw_theta is not None else "",
                         pos.expiration or "",
+                        round(raw_theta, 4) if raw_theta is not None else ""
                     ])
                     excel_row += 1
                     row_count += 1
@@ -445,9 +446,9 @@ class MarginWatchApp(tk.Tk):
                     disp["abbrev"],
                     round(disp["margin"], 2),
                     pos.quantity,
-                    round(raw_theta, 4) if raw_theta is not None else "",
-                    f"=-D{excel_row}*C{excel_row}*100" if raw_theta is not None else "",
+                    f"=-F{excel_row}*C{excel_row}*100" if raw_theta is not None else "",
                     pos.expiration or "",
+                    round(raw_theta, 4) if raw_theta is not None else ""
                 ])
                 excel_row += 1
                 row_count += 1

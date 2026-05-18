@@ -74,7 +74,7 @@ class CacheService:
             ot = ps.pricing_option_type(pos)
             key = (pos.symbol, pos.expiration, pos.strike, ot)
             if key not in self._opt_price:
-                self._opt_price[key] = mds.fetch_option_last_price(
+                self._opt_price[key] = mds.fetch_option_theoretical_price(
                     pos.symbol, pos.expiration, pos.strike, ot)
 
     def _fetch_theta(self, positions: list[Position]) -> None:
