@@ -2,6 +2,7 @@
 data/
 
 # Virtual environment
+.venv/
 venv/
 
 # Python

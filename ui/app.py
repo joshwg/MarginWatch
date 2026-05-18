@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import dataclasses
+import threading
 import tkinter as tk
 from tkinter import ttk, messagebox
 from collections import Counter
 
+import os
 import db
 import constants
 import utils
@@ -14,12 +16,14 @@ import repositories.positions_repository as pos_repo
 import repositories.config_repository as cfg_repo
 from services.cache_service import CacheService
 import services.position_service as ps
+from tkinter import filedialog
 from ui.position_dialog import PositionDialog
 from ui.position_row import compute_display, build_row
 
 
 class MarginWatchApp(tk.Tk):
     def __init__(self):
+        print("Starting...")
         super().__init__()
         self.title("MarginWatch")
         self.geometry("460x800")
@@ -28,9 +32,14 @@ class MarginWatchApp(tk.Tk):
         db.init_db()
         self._config = cfg_repo.load()
         self._cache = CacheService()
+        self._col_sort: tuple[str, str] | None = None  # (col_key, "asc"|"desc")
+        self._refreshing = False  # re-entrancy guard
+        self._refresh_pending = False
 
+        print("Exposing GUI...")
         self._build_ui()
-        self._refresh_positions()
+        self.bind("<Map>", self._on_first_map, add="+")
+        self.after(0, self._deferred_load)
 
     # ------------------------------------------------------------------
     # Config
@@ -87,11 +96,13 @@ class MarginWatchApp(tk.Tk):
         ttk.Radiobutton(sort_frame, text="Exp", variable=self._sort_var,
                         value="expiry", command=self._on_sort_change).pack(anchor=tk.W)
 
-        # Right: + button
+        # Right: + button and export button
         plus_frame = ttk.Frame(top_bar)
         plus_frame.pack(side=tk.RIGHT, padx=6)
         ttk.Button(plus_frame, text="+", width=3,
-                   command=self._add_position).pack(expand=True, pady=4)
+                   command=self._add_position).pack(side=tk.LEFT, expand=True, pady=4)
+        ttk.Button(plus_frame, text="💾", width=3,
+                   command=self._export_xlsx).pack(side=tk.LEFT, expand=True, pady=4)
 
         # Canvas + scrollbar for rows
         self._rows_canvas = tk.Canvas(pos_outer, borderwidth=0, highlightthickness=0)
@@ -109,12 +120,25 @@ class MarginWatchApp(tk.Tk):
         self._rows_canvas.bind("<Configure>", self._on_canvas_configure)
 
         # Column headers
+        _COL_DEFS = [
+            ("Position", 125, "position"),
+            ("#", 28, "qty"),
+            ("Margin", 58, "margin"),
+            ("$/shr", 52, "opt"),
+            ("Theta", 42, "theta"),
+            ("", 44, None),
+        ]
         hdr = ttk.Frame(self._rows_frame)
         hdr.pack(fill=tk.X)
-        for text, w in [("Position", 125), ("#", 28), ("Margin", 58),
-                        ("$/shr", 52), ("Theta", 42), ("", 44)]:
-            ttk.Label(hdr, text=text, width=w // 7, relief="groove",
-                      anchor=tk.CENTER).pack(side=tk.LEFT)
+        self._hdr_labels: dict[str, ttk.Label] = {}
+        for text, w, col_key in _COL_DEFS:
+            lbl = ttk.Label(hdr, text=text, width=w // 7, relief="groove",
+                            anchor=tk.CENTER)
+            lbl.pack(side=tk.LEFT)
+            if col_key:
+                lbl.bind("<Button-1>", lambda e, k=col_key: self._on_col_header_click(k))
+                lbl.configure(cursor="hand2")
+                self._hdr_labels[col_key] = lbl
 
         self._row_widgets: list[tk.Frame] = []
 
@@ -144,6 +168,26 @@ class MarginWatchApp(tk.Tk):
                    command=self._save_config).grid(
             row=2, column=0, columnspan=2, padx=6, pady=(0, 8), sticky=tk.E)
 
+    def _deferred_load(self):
+        print("Loading positions...")
+        self._refresh_positions()
+        print("Positions loaded.")
+
+    def _on_first_map(self, _event=None):
+        self.unbind("<Map>")
+        self._ensure_on_screen()
+
+    def _ensure_on_screen(self):
+        self.update_idletasks()
+        sw = self.winfo_screenwidth()
+        sh = self.winfo_screenheight()
+        x = self.winfo_x()
+        y = self.winfo_y()
+        w = self.winfo_width()
+        h = self.winfo_height()
+        if x + w < 50 or x > sw - 50 or y < 0 or y > sh - 50:
+            self.geometry(f"+{(sw - w) // 2}+{(sh - h) // 2}")
+
     def _on_frame_configure(self, _event=None):
         self._rows_canvas.configure(scrollregion=self._rows_canvas.bbox("all"))
 
@@ -155,18 +199,39 @@ class MarginWatchApp(tk.Tk):
     # ------------------------------------------------------------------
 
     def _on_sort_change(self):
+        self._col_sort = None
+        self._update_col_headers()
         cfg_repo.save_sort(self._sort_var.get())
         self._refresh_positions()
+
+    def _on_col_header_click(self, col_key: str):
+        if self._col_sort and self._col_sort[0] == col_key:
+            self._col_sort = None if self._col_sort[1] == "desc" else (col_key, "desc")
+        else:
+            self._col_sort = (col_key, "asc")
+        self._update_col_headers()
+        self._refresh_positions()
+
+    def _update_col_headers(self):
+        _BASE = {"position": "Position", "qty": "#", "margin": "Margin",
+                 "opt": "$/shr", "theta": "Theta"}
+        for key, lbl in self._hdr_labels.items():
+            base = _BASE[key]
+            if self._col_sort and self._col_sort[0] == key:
+                indicator = " ▲" if self._col_sort[1] == "asc" else " ▼"
+                lbl.config(text=base + indicator)
+            else:
+                lbl.config(text=base)
 
     def _load_sorted_positions(self) -> list:
         rows = pos_repo.get_open_positions()
         if self._sort_var.get() == "alpha":
-            return sorted(rows, key=lambda r: r.symbol)
-        return sorted(rows, key=lambda r: (r.expiration, r.symbol))
+            return sorted(rows, key=lambda r: (r.symbol, r.expiration or "", r.strike or 0.0))
+        return sorted(rows, key=lambda r: (r.expiration or "", r.symbol, r.strike or 0.0))
 
     def _update_summary(self, total_margin: float, total_theta_day: float):
         self._total_lbl.config(text=f"${total_margin:.1f}k")
-        self._theta_lbl.config(text=f"${round(total_theta_day):d}/d")
+        self._theta_lbl.config(text=f"${round(total_theta_day):,d}/d")
         max_margin = utils.parse_float(
             self._config.get("MaximumMarginBasis", "250000"), 250000.0)
         multiplier = utils.parse_float(
@@ -179,29 +244,73 @@ class MarginWatchApp(tk.Tk):
         )
 
     def _refresh_positions(self):
+        if self._refreshing:
+            self._refresh_pending = True
+            return
+        self._refreshing = True
+        self._refresh_pending = False
         positions = self._load_sorted_positions()
-        self._cache.fetch_all(positions)
+        threading.Thread(target=self._bg_fetch, args=(positions,), daemon=True).start()
 
+    def _bg_fetch(self, positions):
+        self._cache.fetch_all(positions)
+        self.after(0, lambda: self._finish_refresh(positions))
+
+    def _finish_refresh(self, positions):
+        try:
+            self._do_refresh_positions(positions)
+        finally:
+            self._refreshing = False
+            if self._refresh_pending:
+                self._refresh_pending = False
+                self._refresh_positions()
+
+    def _do_refresh_positions(self, positions):
         for w in self._row_widgets:
             w.destroy()
         self._row_widgets.clear()
 
+        items = [(pos, compute_display(pos, self._cache)) for pos in positions]
+
+        if self._col_sort:
+            col, direction = self._col_sort
+            reverse = direction == "desc"
+
+            def _col_key(item):
+                pos, disp = item
+                if col == "position":
+                    return (0, pos.symbol, pos.expiration or "", pos.strike or 0.0)
+                if col == "qty":
+                    return (0, pos.quantity or 0)
+                if col == "margin":
+                    return (0, disp["margin"])
+                if col == "opt":
+                    try:
+                        return (0, float(disp["opt_str"]))
+                    except (ValueError, TypeError):
+                        return (1, 0.0)
+                if col == "theta":
+                    td = disp["theta_dollars"]
+                    return (0, td) if td is not None else (1, 0.0)
+                return (0,)
+
+            items.sort(key=_col_key, reverse=reverse)
+
         mergeable_symbols: set[str] = {
             sym for sym, cnt in Counter(
-                p.symbol for p in positions if ps.is_stock(p)
+                p.symbol for p, _ in items if ps.is_stock(p)
             ).items() if cnt >= 2
         }
         seen_stock_symbols: set[str] = set()
         total_margin = 0.0
         total_theta_day = 0.0
 
-        for pos in positions:
-            display = compute_display(pos, self._cache)
+        for pos, display in items:
             total_margin += display["margin"]
             if display["theta_dollars"] is not None:
                 total_theta_day += display["theta_dollars"]
             frame = build_row(
-                self._rows_frame, pos, display,
+                self._rows_frame, pos, display, self._cache,
                 mergeable_symbols, seen_stock_symbols,
                 on_edit=self._edit_position,
                 on_delete=self._delete_position,
@@ -234,16 +343,114 @@ class MarginWatchApp(tk.Tk):
             self._cache.invalidate(d["symbol"])
             self._refresh_positions()
 
+    def _confirm(self, title: str, message: str) -> bool:
+        """Yes/No dialog centered over the main window."""
+        result = tk.BooleanVar(value=False)
+        dlg = tk.Toplevel(self)
+        dlg.title(title)
+        dlg.resizable(False, False)
+        dlg.transient(self)
+        ttk.Label(dlg, text=message, wraplength=260, padding=(12, 10)).pack()
+        bf = ttk.Frame(dlg)
+        bf.pack(pady=(0, 10))
+        ttk.Button(bf, text="Yes", command=lambda: [result.set(True), dlg.destroy()]).pack(side=tk.LEFT, padx=6)
+        ttk.Button(bf, text="No",  command=dlg.destroy).pack(side=tk.LEFT, padx=6)
+        dlg.update_idletasks()
+        x = self.winfo_rootx() + (self.winfo_width()  - dlg.winfo_reqwidth())  // 2
+        y = self.winfo_rooty() + (self.winfo_height() - dlg.winfo_reqheight()) // 2
+        dlg.geometry(f"+{x}+{y}")
+        dlg.focus_force()
+        dlg.grab_set()
+        dlg.wait_window()
+        return result.get()
+
     def _merge_stock(self, symbol: str):
-        """Merge all OPEN STOCK rows for symbol into one, weighted-avg cost basis."""
-        if not messagebox.askyesno("Merge Positions",
-                                   f"Merge all {symbol} STOCK positions into one?"):
+        if not self._confirm("Merge Positions",
+                             f"Merge all {symbol} STOCK positions into one?"):
             return
         pos_repo.merge_stock_positions(symbol)
         self._refresh_positions()
 
     def _delete_position(self, row_id: int):
-        if not messagebox.askyesno("Delete", "Delete this position?"):
+        if not self._confirm("Delete", "Delete this position?"):
             return
         pos_repo.delete_position(row_id)
         self._refresh_positions()
+
+    def _export_xlsx(self):
+        import openpyxl
+
+        win_user = os.environ.get("USERNAME") or os.environ.get("USER", "")
+        win_downloads = f"/mnt/c/Users/{win_user}/Downloads"
+        downloads = win_downloads if os.path.isdir(win_downloads) else os.path.join(os.path.expanduser("~"), "Downloads")
+        path = filedialog.asksaveasfilename(
+            title="Export positions",
+            initialdir=downloads,
+            initialfile="positions.xlsx",
+            defaultextension=".xlsx",
+            filetypes=[("Excel workbook", "*.xlsx")],
+        )
+        if not path:
+            return
+
+        positions = sorted(
+            pos_repo.get_open_positions(),
+            key=lambda r: (r.symbol, r.expiration or "", r.strike or 0.0),
+        )
+        self._cache.fetch_all(positions)
+
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Positions"
+        # A=Position  B=Margin($k)  C=Qty  D=Per-Share Theta  E=Position Theta($)  F=Expiration
+        ws.append(["Position", "Margin ($k)", "Qty", "Per-Share Theta", "Position Theta ($)", "Expiration"])
+
+        excel_row = 2  # header is row 1; data starts at row 2
+        row_count = 0
+
+        for pos in positions:
+            if ps.is_stock(pos):
+                stock_label = f"{pos.symbol} stock ({pos.long_shares or 0} sh)"
+                stock_margin = round(ps.margin_k(pos), 2)
+                if ps.has_covered_call(pos):
+                    # Row 1: long stock leg — no theta
+                    ws.append([stock_label, 0, pos.long_shares or 0, 0, 0, ""])
+                    excel_row += 1
+                    row_count += 1
+                    # Row 2: covered call leg — margin + formula theta
+                    key = (pos.symbol, pos.expiration, pos.strike, "CALL")
+                    raw_theta = self._cache.theta(key)
+                    ws.append([
+                        ps.position_abbrev(pos),
+                        stock_margin,
+                        pos.quantity,
+                        round(raw_theta, 4) if raw_theta is not None else "",
+                        f"=-D{excel_row}*C{excel_row}*100" if raw_theta is not None else "",
+                        pos.expiration or "",
+                    ])
+                    excel_row += 1
+                    row_count += 1
+                else:
+                    # Plain long stock — no expiration, no theta
+                    ws.append([stock_label, stock_margin, pos.long_shares or 0, 0, 0, ""])
+                    excel_row += 1
+                    row_count += 1
+            else:
+                # Regular CALL or PUT
+                disp = compute_display(pos, self._cache)
+                ot = ps.pricing_option_type(pos)
+                key = (pos.symbol, pos.expiration, pos.strike, ot)
+                raw_theta = self._cache.theta(key) if pos.strike else None
+                ws.append([
+                    disp["abbrev"],
+                    round(disp["margin"], 2),
+                    pos.quantity,
+                    round(raw_theta, 4) if raw_theta is not None else "",
+                    f"=-D{excel_row}*C{excel_row}*100" if raw_theta is not None else "",
+                    pos.expiration or "",
+                ])
+                excel_row += 1
+                row_count += 1
+
+        wb.save(path)
+        messagebox.showinfo("Export", f"Saved {row_count} rows to:\n{path}")

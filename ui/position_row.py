@@ -33,7 +33,7 @@ def compute_display(pos: Position, cache: CacheService) -> dict:
         "itm": ps.is_itm(pos, price),
         "opt_str": f"{opt_price:.2f}" if opt_price is not None else "—",
         "theta_dollars": td,
-        "theta_str": f"${round(td):d}" if td is not None else "—",
+        "theta_str": f"${round(td):,d}" if td is not None else "—",
         "is_stock_row": ps.is_stock(pos),
         "is_profitable": ps.is_profitable(pos, price),
     }
@@ -43,6 +43,7 @@ def build_row(
     parent: tk.Frame,
     pos: Position,
     display: dict,
+    cache: CacheService,
     mergeable_symbols: set[str],
     seen_stock_symbols: set[str],
     on_edit: Callable[[int], None],
@@ -55,8 +56,10 @@ def build_row(
     row_frame = tk.Frame(parent, bg=bg)
     row_frame.pack(fill=tk.X, pady=1)
 
-    if display["price"] is not None:
-        Tooltip(row_frame, f"{pos.symbol} last: ${display['price']:.2f}")
+    def _price_text(sym=pos.symbol):
+        p = cache.fetch_price(sym)
+        return f"{sym} last: ${p:.2f}" if p is not None else f"{sym} last: N/A"
+    Tooltip(row_frame, _price_text)
 
     # ITM indicator swatch
     itm_canvas = tk.Canvas(row_frame, width=6, height=16, bg=bg, highlightthickness=0)

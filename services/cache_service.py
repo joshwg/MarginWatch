@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import time
+
 from models import Position
 import services.market_data_service as mds
 import services.position_service as ps
+
+_PRICE_TTL = 600.0  # seconds before a cached stock price is considered stale
 
 
 class CacheService:
@@ -12,10 +16,12 @@ class CacheService:
 
     Call fetch_all() after loading positions, then use the accessor methods
     (price, opt_price, theta) to read cached values without hitting the network.
+    Stock prices expire after 60 s; call fetch_price() to get a fresh value.
     """
 
     def __init__(self):
         self._price: dict[str, float | None] = {}
+        self._price_ts: dict[str, float] = {}
         self._opt_price: dict[tuple, float | None] = {}
         self._theta: dict[tuple, float | None] = {}
 
@@ -26,6 +32,7 @@ class CacheService:
     def invalidate(self, symbol: str) -> None:
         """Drop all cached data for *symbol* so the next fetch is fresh."""
         self._price.pop(symbol, None)
+        self._price_ts.pop(symbol, None)
         self._opt_price = {k: v for k, v in self._opt_price.items() if k[0] != symbol}
         self._theta     = {k: v for k, v in self._theta.items()     if k[0] != symbol}
 
@@ -35,7 +42,15 @@ class CacheService:
         self._fetch_opt_prices(positions)
         self._fetch_theta(positions)
 
+    def fetch_price(self, symbol: str) -> float | None:
+        """Return the stock price, re-fetching from the network if the cache is expired."""
+        if time.monotonic() - self._price_ts.get(symbol, 0.0) > _PRICE_TTL:
+            self._price[symbol] = mds.fetch_last_price(symbol)
+            self._price_ts[symbol] = time.monotonic()
+        return self._price.get(symbol)
+
     def price(self, symbol: str) -> float | None:
+        """Return the cached stock price without triggering a network fetch."""
         return self._price.get(symbol)
 
     def opt_price(self, key: tuple) -> float | None:
@@ -50,8 +65,7 @@ class CacheService:
 
     def _fetch_prices(self, positions: list[Position]) -> None:
         for sym in {p.symbol for p in positions}:
-            if sym not in self._price:
-                self._price[sym] = mds.fetch_last_price(sym)
+            self.fetch_price(sym)
 
     def _fetch_opt_prices(self, positions: list[Position]) -> None:
         for pos in positions:

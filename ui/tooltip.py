@@ -1,6 +1,7 @@
 """Hover tooltip widget."""
 
 import tkinter as tk
+from typing import Callable
 
 import constants
 
@@ -11,7 +12,7 @@ _MOVE_THRESHOLD = 8      # pixels of movement that resets the timer
 class Tooltip:
     """Show a small popup label after hovering still over a widget for 3 seconds."""
 
-    def __init__(self, widget: tk.Widget, text: str):
+    def __init__(self, widget: tk.Widget, text: str | Callable[[], str]):
         self._widget = widget
         self._text = text
         self._tip: tk.Toplevel | None = None
@@ -53,7 +54,8 @@ class Tooltip:
         self._tip = tk.Toplevel(self._widget)
         self._tip.wm_overrideredirect(True)
         self._tip.wm_withdraw()
-        lbl = tk.Label(self._tip, text=self._text, background=constants.TOOLTIP_BG,
+        text = self._text() if callable(self._text) else self._text
+        lbl = tk.Label(self._tip, text=text, background=constants.TOOLTIP_BG,
                        relief="solid", borderwidth=1,
                        font=("TkDefaultFont", 8))
         lbl.pack()

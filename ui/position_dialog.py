@@ -5,7 +5,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 from datetime import date, timedelta
 
-from tkcalendar import DateEntry
+from tkcalendar import Calendar
 
 import constants
 import utils
@@ -17,17 +17,19 @@ class PositionDialog(tk.Toplevel):
     def __init__(self, parent, row=None):
         super().__init__(parent)
         self.title("Add Position" if row is None else "Edit Position")
-        self.resizable(False, False)
+        self.resizable(True, True)
         self.result = None
         self._row = row
         self._build(row)
         self.transient(parent)
-        self.update_idletasks()
+        self.update()
+        w = self.winfo_reqwidth()
+        h = self.winfo_reqheight()
+        self.minsize(w, h)
         x = parent.winfo_rootx() + 100
         y = parent.winfo_rooty() + 100
-        self.geometry(f"+{x}+{y}")
+        self.geometry(f"{w}x{h}+{x}+{y}")
         self.focus_force()
-        self.grab_set()
         self._sym_entry.focus_set()
         self.wait_window(self)
 
@@ -66,13 +68,15 @@ class PositionDialog(tk.Toplevel):
             init_date = date.fromisoformat(existing_exp)
         else:
             init_date = utils.next_option_friday()
-        self._date_entry = DateEntry(
-            self, width=12, date_pattern="yyyy-mm-dd",
-            year=init_date.year, month=init_date.month, day=init_date.day
-        )
-        self._date_entry.grid(row=3, column=1, padx=px, pady=py)
-        self._date_entry.bind("<equal>", self._exp_plus_day)
-        self._date_entry.bind("<minus>", self._exp_minus_day)
+        self._exp_var = tk.StringVar(value=init_date.isoformat())
+        exp_frame = ttk.Frame(self)
+        exp_frame.grid(row=3, column=1, padx=px, pady=py)
+        exp_entry = ttk.Entry(exp_frame, textvariable=self._exp_var, width=10)
+        exp_entry.pack(side=tk.LEFT)
+        ttk.Button(exp_frame, text="…", width=2,
+                   command=self._pick_date).pack(side=tk.LEFT, padx=(2, 0))
+        exp_entry.bind("<equal>", self._exp_plus_day)
+        exp_entry.bind("<minus>", self._exp_minus_day)
 
         # Strike (row 4)
         lbl("Strike:", 4)
@@ -118,12 +122,41 @@ class PositionDialog(tk.Toplevel):
         self._on_type_change()
         self.bind("<Return>", lambda _: self._save())
 
+    def _pick_date(self):
+        try:
+            init = date.fromisoformat(self._exp_var.get())
+        except ValueError:
+            init = utils.next_option_friday()
+        dlg = tk.Toplevel(self)
+        dlg.title("Pick date")
+        dlg.resizable(False, False)
+        dlg.transient(self)
+        cal = Calendar(dlg, selectmode="day", date_pattern="yyyy-mm-dd",
+                       year=init.year, month=init.month, day=init.day)
+        cal.pack(padx=6, pady=6)
+        ttk.Button(dlg, text="OK",
+                   command=lambda: [self._exp_var.set(cal.get_date()), dlg.destroy()]
+                   ).pack(pady=(0, 8))
+        dlg.update_idletasks()
+        x = self.winfo_rootx() + (self.winfo_width()  - dlg.winfo_reqwidth())  // 2
+        y = self.winfo_rooty() + (self.winfo_height() - dlg.winfo_reqheight()) // 2
+        dlg.geometry(f"+{x}+{y}")
+        dlg.focus_force()
+        dlg.grab_set()
+        dlg.wait_window()
+
     def _exp_plus_day(self, _event=None):
-        self._date_entry.set_date(self._date_entry.get_date() + timedelta(days=1))
+        try:
+            self._exp_var.set((date.fromisoformat(self._exp_var.get()) + timedelta(days=1)).isoformat())
+        except ValueError:
+            pass
         return "break"
 
     def _exp_minus_day(self, _event=None):
-        self._date_entry.set_date(self._date_entry.get_date() - timedelta(days=1))
+        try:
+            self._exp_var.set((date.fromisoformat(self._exp_var.get()) - timedelta(days=1)).isoformat())
+        except ValueError:
+            pass
         return "break"
 
     def _validate(self) -> str:
@@ -276,7 +309,7 @@ class PositionDialog(tk.Toplevel):
         sym = self._sym.get().strip().upper()
         strike = utils.parse_float(self._strike.get(), 0.0)
         qty = utils.parse_int(self._qty.get(), 0)
-        exp = (self._date_entry.get_date().isoformat()
+        exp = (self._exp_var.get()
                if ot != "STOCK" or utils.parse_float(self._strike.get(), 0.0)
                else constants.NO_EXPIRATION)
         long_shares = None
