@@ -5,19 +5,16 @@ from __future__ import annotations
 import dataclasses
 import threading
 import tkinter as tk
-from tkinter import ttk, messagebox
-from collections import Counter
+from tkinter import ttk, messagebox, filedialog
 
-import os
 import db
 import constants
 import utils
 import repositories.positions_repository as pos_repo
 import repositories.config_repository as cfg_repo
 from services.cache_service import CacheService
+import services.export_service as export_service
 import services.position_service as ps
-from tkinter import filedialog
-from ui.position_dialog import PositionDialog
 from ui.position_row import compute_display, build_row
 
 
@@ -92,9 +89,11 @@ class MarginWatchApp(tk.Tk):
         initial_sort = self._config.get("SortOrder", "alpha")
         self._sort_var = tk.StringVar(value=initial_sort)
         ttk.Radiobutton(sort_frame, text="A-Z", variable=self._sort_var,
-                        value="alpha", command=self._on_sort_change).pack(anchor=tk.W)
+                        value="alpha", command=self._on_sort_change).pack(side=tk.LEFT)
         ttk.Radiobutton(sort_frame, text="Exp", variable=self._sort_var,
-                        value="expiry", command=self._on_sort_change).pack(anchor=tk.W)
+                        value="expiry", command=self._on_sort_change).pack(side=tk.LEFT)
+        ttk.Radiobutton(sort_frame, text="Type", variable=self._sort_var,
+                        value="type", command=self._on_sort_change).pack(side=tk.LEFT)
 
         # Right: + button and export button
         plus_frame = ttk.Frame(top_bar)
@@ -225,8 +224,20 @@ class MarginWatchApp(tk.Tk):
 
     def _load_sorted_positions(self) -> list:
         rows = pos_repo.get_open_positions()
-        if self._sort_var.get() == "alpha":
+        sort = self._sort_var.get()
+        if sort == "alpha":
             return sorted(rows, key=lambda r: (r.symbol, r.expiration or "", r.strike or 0.0))
+        if sort == "type":
+            def _type_key(r):
+                # CALL=0, STOCK-with-cover=0, PUT=1, STOCK-no-cover=2
+                if r.option_type == "CALL" or (r.option_type == "STOCK" and r.strike):
+                    t = 0
+                elif r.option_type == "PUT":
+                    t = 1
+                else:
+                    t = 2
+                return (t, r.symbol, r.expiration or "", r.strike or 0.0)
+            return sorted(rows, key=_type_key)
         return sorted(rows, key=lambda r: (r.expiration or "", r.symbol, r.strike or 0.0))
 
     def _update_summary(self, total_margin: float, total_theta_day: float):
@@ -297,12 +308,8 @@ class MarginWatchApp(tk.Tk):
 
             items.sort(key=_col_key, reverse=reverse)
 
-        mergeable_symbols: set[str] = {
-            sym for sym, cnt in Counter(
-                p.symbol for p, _ in items if ps.is_stock(p)
-            ).items() if cnt >= 2
-        }
-        seen_stock_symbols: set[str] = set()
+        mergeable_groups = ps.mergeable_stock_groups([pos for pos, _ in items])
+        seen_merge_groups: set[tuple] = set()
         total_margin = 0.0
         total_theta_day = 0.0
 
@@ -312,7 +319,7 @@ class MarginWatchApp(tk.Tk):
                 total_theta_day += display["theta_dollars"]
             frame = build_row(
                 self._rows_frame, pos, display, self._cache,
-                mergeable_symbols, seen_stock_symbols,
+                mergeable_groups, seen_merge_groups,
                 on_edit=self._edit_position,
                 on_delete=self._delete_position,
                 on_merge=self._merge_stock,
@@ -326,6 +333,7 @@ class MarginWatchApp(tk.Tk):
     # ------------------------------------------------------------------
 
     def _add_position(self):
+        from ui.position_dialog import PositionDialog
         dlg = PositionDialog(self)
         if dlg.result:
             d = dlg.result
@@ -334,6 +342,7 @@ class MarginWatchApp(tk.Tk):
             self._refresh_positions()
 
     def _edit_position(self, row_id: int):
+        from ui.position_dialog import PositionDialog
         pos = pos_repo.get_position(row_id)
         if not pos:
             return
@@ -365,11 +374,12 @@ class MarginWatchApp(tk.Tk):
         dlg.wait_window()
         return result.get()
 
-    def _merge_stock(self, symbol: str):
+    def _merge_stock(self, key: tuple):
+        symbol, expiration, strike = key
         if not self._confirm("Merge Positions",
-                             f"Merge all {symbol} STOCK positions into one?"):
+                             f"Merge {symbol} STOCK positions into one?"):
             return
-        pos_repo.merge_stock_positions(symbol)
+        pos_repo.merge_stock_positions(symbol, expiration, strike)
         self._refresh_positions()
 
     def _delete_position(self, row_id: int):
@@ -379,11 +389,7 @@ class MarginWatchApp(tk.Tk):
         self._refresh_positions()
 
     def _export_xlsx(self):
-        import openpyxl
-
-        win_user = os.environ.get("USERNAME") or os.environ.get("USER", "")
-        win_downloads = f"/mnt/c/Users/{win_user}/Downloads"
-        downloads = win_downloads if os.path.isdir(win_downloads) else os.path.join(os.path.expanduser("~"), "Downloads")
+        downloads = utils.windows_downloads_dir()
         path = filedialog.asksaveasfilename(
             title="Export positions",
             initialdir=downloads,
@@ -399,59 +405,6 @@ class MarginWatchApp(tk.Tk):
             key=lambda r: (r.symbol, r.expiration or "", r.strike or 0.0),
         )
         self._cache.fetch_all(positions)
-
-        wb = openpyxl.Workbook()
-        ws = wb.active
-        ws.title = "Positions"
-        # A=Position  B=Margin($k)  C=Qty  D=Position Theta($)  E=Expiration  F=Per-Share Theta
-        ws.append(["Position", "Margin ($k)", "Qty", "Position Theta ($)", "Expiration", "Per-Share Theta"])
-
-        excel_row = 2  # header is row 1; data starts at row 2
-        row_count = 0
-
-        for pos in positions:
-            if ps.is_stock(pos):
-                stock_label = f"{pos.symbol} stock ({pos.long_shares or 0} sh)"
-                stock_margin = round(ps.margin_k(pos), 2)
-                if ps.has_covered_call(pos):
-                    # Row 1: long stock leg — margin lives here
-                    ws.append([stock_label, stock_margin, pos.long_shares or 0, 0, 0, ""])
-                    excel_row += 1
-                    row_count += 1
-                    # Row 2: covered call leg — theta only, no margin
-                    key = (pos.symbol, pos.expiration, pos.strike, "CALL")
-                    raw_theta = self._cache.theta(key)
-                    ws.append([
-                        ps.position_abbrev(pos),
-                        0,
-                        pos.quantity,
-                        f"=-F{excel_row}*C{excel_row}*100" if raw_theta is not None else "",
-                        pos.expiration or "",
-                        round(raw_theta, 4) if raw_theta is not None else ""
-                    ])
-                    excel_row += 1
-                    row_count += 1
-                else:
-                    # Plain long stock — no expiration, no theta
-                    ws.append([stock_label, stock_margin, pos.long_shares or 0, 0, 0, ""])
-                    excel_row += 1
-                    row_count += 1
-            else:
-                # Regular CALL or PUT
-                disp = compute_display(pos, self._cache)
-                ot = ps.pricing_option_type(pos)
-                key = (pos.symbol, pos.expiration, pos.strike, ot)
-                raw_theta = self._cache.theta(key) if pos.strike else None
-                ws.append([
-                    disp["abbrev"],
-                    round(disp["margin"], 2),
-                    pos.quantity,
-                    f"=-F{excel_row}*C{excel_row}*100" if raw_theta is not None else "",
-                    pos.expiration or "",
-                    round(raw_theta, 4) if raw_theta is not None else ""
-                ])
-                excel_row += 1
-                row_count += 1
-
+        wb, row_count = export_service.build_workbook(positions, self._cache)
         wb.save(path)
         messagebox.showinfo("Export", f"Saved {row_count} rows to:\n{path}")

@@ -14,8 +14,8 @@ EXPIRY_EXPIRED    = "#5C5A97"
 EXPIRY_WEEK       = "#A5CDAA"
 EXPIRY_TWOWEEKS   = "#F2E1A9"
 EXPIRY_THREEWEEKS = "#ffc8c8"
-EXPIRY_FOURWEEKS  = "#4682B4"
-EXPIRY_DISTANT    = "#d4d4d4"
+EXPIRY_FOURWEEKS  = "#ADD8E6"
+EXPIRY_DISTANT    = "#FFD5A8"
 
 # ---------------------------------------------------------------------------
 # Indicator swatch colors

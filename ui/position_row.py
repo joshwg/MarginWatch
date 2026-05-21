@@ -44,11 +44,11 @@ def build_row(
     pos: Position,
     display: dict,
     cache: CacheService,
-    mergeable_symbols: set[str],
-    seen_stock_symbols: set[str],
+    mergeable_groups: set[tuple],
+    seen_merge_groups: set[tuple],
     on_edit: Callable[[int], None],
     on_delete: Callable[[int], None],
-    on_merge: Callable[[str], None],
+    on_merge: Callable[[tuple], None],
 ) -> tk.Frame:
     """Create and return a tk.Frame representing one position row."""
     bg = display["bg"]
@@ -57,7 +57,7 @@ def build_row(
     row_frame.pack(fill=tk.X, pady=1)
 
     def _price_text(sym=pos.symbol):
-        p = cache.fetch_price(sym)
+        p = cache.price(sym)
         return f"{sym} last: ${p:.2f}" if p is not None else f"{sym} last: N/A"
     Tooltip(row_frame, _price_text)
 
@@ -93,10 +93,11 @@ def build_row(
               command=lambda rid=row_id: on_edit(rid)).pack(side=tk.LEFT)
     tk.Button(btn_frame, text="✕", width=1, pady=0, font=("TkDefaultFont", 7),
               command=lambda rid=row_id: on_delete(rid)).pack(side=tk.LEFT)
-    if ps.is_stock(pos) and sym in mergeable_symbols:
-        if sym not in seen_stock_symbols:
+    merge_key = (pos.symbol, pos.expiration or "", pos.strike or 0.0)
+    if ps.is_stock(pos) and merge_key in mergeable_groups:
+        if merge_key not in seen_merge_groups:
             tk.Button(btn_frame, text="⊕", width=1, pady=0, font=("TkDefaultFont", 7),
-                      command=lambda s=sym: on_merge(s)).pack(side=tk.LEFT)
-        seen_stock_symbols.add(sym)
+                      command=lambda k=merge_key: on_merge(k)).pack(side=tk.LEFT)
+        seen_merge_groups.add(merge_key)
 
     return row_frame

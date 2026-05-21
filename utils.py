@@ -1,4 +1,19 @@
+import os
 from datetime import date, timedelta
+
+
+def windows_downloads_dir() -> str:
+    """Return the Windows Downloads folder path, trying common WSL mount points."""
+    win_user = os.environ.get("USERNAME") or os.environ.get("USER", "")
+    candidates = [
+        f"/mnt/c/Users/{win_user}/Downloads",
+        f"/c/Users/{win_user}/Downloads",
+        os.path.join(os.path.expanduser("~"), "Downloads"),
+    ]
+    for path in candidates:
+        if os.path.isdir(path):
+            return path
+    return candidates[-1]
 
 
 def next_option_friday() -> date:

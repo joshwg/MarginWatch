@@ -73,33 +73,46 @@ def delete_position(row_id: int) -> None:
         conn.commit()
 
 
-def merge_stock_positions(symbol: str) -> None:
-    """Merge all OPEN STOCK rows for symbol into one using weighted-avg cost basis.
+def merge_stock_positions(symbol: str, expiration: str, strike: float) -> None:
+    """Merge OPEN STOCK rows that are eligible to merge with the given position.
 
-    Does nothing if fewer than 2 matching rows exist.
+    Eligible rows: same symbol, and (anchor or candidate has no cover) OR
+    both share the same expiration+strike.
+    The surviving row is the first covered row if one exists, otherwise the first row.
+    Does nothing if fewer than 2 eligible rows exist.
     """
+    anchor_has_cover = bool(strike)
     with db.get_connection() as conn:
-        stock_rows = conn.execute(
-            "SELECT id, long_shares, long_cost FROM positions"
+        all_rows = conn.execute(
+            "SELECT id, long_shares, long_cost, strike, expiration FROM positions"
             " WHERE status='OPEN' AND option_type='STOCK' AND symbol=?",
-            (symbol,)
+            (symbol,),
         ).fetchall()
-        if len(stock_rows) < 2:
+
+        merge_rows = []
+        for r in all_rows:
+            row_has_cover = bool(r["strike"])
+            if not anchor_has_cover or not row_has_cover:
+                merge_rows.append(r)
+            elif r["strike"] == strike and r["expiration"] == expiration:
+                merge_rows.append(r)
+
+        if len(merge_rows) < 2:
             return
-        total_shares = sum(r["long_shares"] or 0 for r in stock_rows)
+
+        total_shares = sum(r["long_shares"] or 0 for r in merge_rows)
         total_cost = sum(
-            (r["long_shares"] or 0) * (r["long_cost"] or 0.0)
-            for r in stock_rows
+            (r["long_shares"] or 0) * (r["long_cost"] or 0.0) for r in merge_rows
         )
         avg_cost = total_cost / total_shares if total_shares else 0.0
-        keep_id = stock_rows[0]["id"]
-        drop_ids = [r["id"] for r in stock_rows[1:]]
+
+        covered = [r for r in merge_rows if r["strike"]]
+        keep_id = (covered[0] if covered else merge_rows[0])["id"]
+        drop_ids = [r["id"] for r in merge_rows if r["id"] != keep_id]
+
         conn.execute(
             "UPDATE positions SET long_shares=?, long_cost=? WHERE id=?",
-            (total_shares, avg_cost, keep_id)
+            (total_shares, avg_cost, keep_id),
         )
-        conn.executemany(
-            "DELETE FROM positions WHERE id=?",
-            [(rid,) for rid in drop_ids]
-        )
+        conn.executemany("DELETE FROM positions WHERE id=?", [(rid,) for rid in drop_ids])
         conn.commit()

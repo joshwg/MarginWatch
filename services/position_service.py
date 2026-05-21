@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from datetime import date
 
 from models import Position
@@ -114,6 +115,36 @@ def days_to_expiry(pos: Position) -> int:
     if is_stock(pos) and not pos.strike:
         return 9999
     return (date.fromisoformat(pos.expiration) - date.today()).days
+
+
+def can_merge_stock(p1: Position, p2: Position) -> bool:
+    """True if two STOCK positions are eligible to merge.
+
+    Same symbol always required. If at least one has no cover (strike == 0), any
+    same-symbol pair qualifies. If both have cover, they must share expiration and strike.
+    """
+    if p1.symbol != p2.symbol:
+        return False
+    if not has_covered_call(p1) or not has_covered_call(p2):
+        return True
+    return p1.expiration == p2.expiration and p1.strike == p2.strike
+
+
+def mergeable_stock_groups(positions: list[Position]) -> set[tuple]:
+    """Return (symbol, expiration, strike) keys of STOCK positions that have a merge partner."""
+    by_symbol: dict[str, list[Position]] = {}
+    for p in positions:
+        if is_stock(p):
+            by_symbol.setdefault(p.symbol, []).append(p)
+
+    result: set[tuple] = set()
+    for group in by_symbol.values():
+        for i, p1 in enumerate(group):
+            for p2 in group[i + 1:]:
+                if can_merge_stock(p1, p2):
+                    result.add((p1.symbol, p1.expiration or "", p1.strike or 0.0))
+                    result.add((p2.symbol, p2.expiration or "", p2.strike or 0.0))
+    return result
 
 
 def display_quantity(pos: Position) -> int:

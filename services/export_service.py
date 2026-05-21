@@ -1,0 +1,66 @@
+"""Build openpyxl workbooks from position data."""
+
+from __future__ import annotations
+
+from __future__ import annotations
+
+from models import Position
+from services.cache_service import CacheService
+import services.position_service as ps
+
+
+def build_workbook(positions: list[Position], cache: CacheService) -> tuple:
+    """Return (workbook, row_count) for the given positions.
+
+    Columns: A=Position  B=Margin($k)  C=Qty  D=Position Theta($)  E=Expiration  F=Per-Share Theta
+    """
+    import openpyxl
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    assert ws is not None
+    ws.title = "Positions"
+    ws.append(["Position", "Margin ($k)", "Qty", "Position Theta ($)", "Expiration", "Per-Share Theta"])
+
+    excel_row = 2  # header is row 1; data starts at row 2
+    row_count = 0
+
+    for pos in positions:
+        if ps.is_stock(pos):
+            stock_label = f"{pos.symbol} stock ({pos.long_shares or 0} sh)"
+            stock_margin = round(ps.margin_k(pos), 2)
+            if ps.has_covered_call(pos):
+                ws.append([stock_label, stock_margin, pos.long_shares or 0, 0, 0, ""])
+                excel_row += 1
+                row_count += 1
+                key = (pos.symbol, pos.expiration, pos.strike, "CALL")
+                raw_theta = cache.theta(key)
+                ws.append([
+                    ps.position_abbrev(pos),
+                    0,
+                    pos.quantity,
+                    f"=-F{excel_row}*C{excel_row}*100" if raw_theta is not None else "",
+                    pos.expiration or "",
+                    round(raw_theta, 4) if raw_theta is not None else "",
+                ])
+                excel_row += 1
+                row_count += 1
+            else:
+                ws.append([stock_label, stock_margin, pos.long_shares or 0, 0, 0, ""])
+                excel_row += 1
+                row_count += 1
+        else:
+            ot = ps.pricing_option_type(pos)
+            key = (pos.symbol, pos.expiration, pos.strike, ot)
+            raw_theta = cache.theta(key) if pos.strike else None
+            ws.append([
+                ps.position_abbrev(pos),
+                round(ps.margin_k(pos), 2),
+                pos.quantity,
+                f"=-F{excel_row}*C{excel_row}*100" if raw_theta is not None else "",
+                pos.expiration or "",
+                round(raw_theta, 4) if raw_theta is not None else "",
+            ])
+            excel_row += 1
+            row_count += 1
+
+    return wb, row_count
