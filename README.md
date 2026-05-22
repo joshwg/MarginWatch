@@ -1,6 +1,6 @@
 # MarginWatch
 
-A small desktop app for tracking naked option and covered-call positions and their margin requirements.
+A small desktop app for tracking naked option, covered-call, and vertical spread positions and their margin requirements.
 
 ## Requirements
 
@@ -21,7 +21,7 @@ The database is created automatically on first run.
 ### Desktop app (Tkinter)
 
 ```bash
-export PYTHONPATH=src
+export PYTHONPATH=src:..
 venv/bin/python src/main.py
 ```
 
@@ -30,7 +30,7 @@ venv/bin/python src/main.py
 ### Web service (Flask)
 
 ```bash
-export PYTHONPATH=src
+export PYTHONPATH=src:..
 export MARGIN_PWD=yourpassword
 venv/bin/python src/main_web.py
 ```
@@ -62,32 +62,51 @@ data/
 | `CALL` | Naked call |
 | `PUT` | Naked put |
 | `STOCK` | Long stock — `strike=0` means no covered call written yet; `strike>0` means a covered call is written at that strike/expiration |
+| `CALL_SPREAD` | Vertical call spread — `strike` is the short leg, `long_strike` is the long (protective) leg |
+| `PUT_SPREAD` | Vertical put spread — `strike` is the short leg, `long_strike` is the long (protective) leg |
 
 Over-covered positions (more calls than shares ÷ 100) are represented as a `STOCK` row for the covered portion plus a `CALL` row for the naked excess.
+
+### Spread types
+
+| Spread | Short leg | Long leg | Margin |
+|---|---|---|---|
+| Bear call (credit) | Lower strike call | Higher strike call | `(long − short) × contracts × 100` |
+| Bull put (credit) | Higher strike put | Lower strike put | `(short − long) × contracts × 100` |
+| Bull call (debit) | Higher strike call | Lower strike call | 0 |
+| Bear put (debit) | Lower strike put | Higher strike put | 0 |
+
+Credit spreads are detected automatically: for calls, `short_strike < long_strike`; for puts, `short_strike > long_strike`.
+
+In the UI, credit spreads display the short leg on top; debit spreads display the long leg on top. Exports write one row per leg.
 
 ## Position Abbreviation Format
 
 ```
-TICKER YY-MM-DD STRIKE[c/p]    e.g.  XYZ 26-06-20 50c
-TICKER (no cover)              e.g.  XYZ (no cover)
+TICKER YY-MM-DD STRIKE[c/p]               e.g.  XYZ 26-06-20 50c
+TICKER YY-MM-DD SHORT/LONG[c/p]           e.g.  XYZ 26-06-20 50/55p
+TICKER (no cover)                          e.g.  XYZ (no cover)
 ```
 
 ## Expiry Color Coding
 
 | Color | Days to expiry |
 |---|---|
-| Pale green | ≤ 7 days |
-| Pale yellow | ≤ 14 days |
-| Pale red | ≤ 21 days |
-| Pale blue | ≤ 28 days |
-| Gray | > 28 days |
+| Pale green | ≤ 6 days |
+| Pale yellow | ≤ 13 days |
+| Pale red | ≤ 20 days |
+| Pale blue | ≤ 27 days |
+| Gray | > 27 days |
 
 A small yellow rectangle in the left margin of a row indicates the option is in-the-money.
 
 ## Margin Calculation
 
 ```
-Margin ($k) = strike × contracts ÷ 10
+Naked CALL/PUT:   strike × contracts ÷ 10  ($k)
+Credit spread:    |long_strike − short_strike| × contracts ÷ 10  ($k)
+Debit spread:     0  (max loss is the debit paid, not tracked)
+STOCK:            long_shares × long_cost ÷ 1000  ($k)
 ```
 
 ## Configuration
@@ -101,4 +120,4 @@ Configuration is stored in the `config` table and editable from the bottom panel
 
 ## Maintenance
 
-Expired `CALL`/`PUT` positions are automatically soft-closed (status → `CLOSED`) on the Monday after expiration.
+Expired `CALL`, `PUT`, `CALL_SPREAD`, and `PUT_SPREAD` positions are automatically deleted on the Monday after expiration.

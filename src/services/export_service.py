@@ -48,6 +48,33 @@ def build_workbook(positions: list[Position], cache: CacheService) -> tuple:
                 ws.append([stock_label, stock_margin, pos.long_shares or 0, 0, 0, ""])
                 excel_row += 1
                 row_count += 1
+        elif ps.is_spread(pos):
+            ot = ps.pricing_option_type(pos)
+            short_key = (pos.symbol, pos.expiration, pos.strike, ot)
+            long_key  = (pos.symbol, pos.expiration, pos.long_strike, ot)
+            short_theta = cache.theta(short_key)
+            long_theta  = cache.theta(long_key)
+            short_abbrev, long_abbrev = ps.spread_leg_abbrevs(pos)
+            ws.append([
+                short_abbrev,
+                round(ps.margin_k(pos), 2),
+                pos.quantity,
+                f"=-F{excel_row}*C{excel_row}*100" if short_theta is not None else "",
+                pos.expiration or "",
+                round(short_theta, 4) if short_theta is not None else "",
+            ])
+            excel_row += 1
+            row_count += 1
+            ws.append([
+                long_abbrev,
+                0,
+                pos.quantity,
+                f"=F{excel_row}*C{excel_row}*100" if long_theta is not None else "",
+                pos.expiration or "",
+                round(long_theta, 4) if long_theta is not None else "",
+            ])
+            excel_row += 1
+            row_count += 1
         else:
             ot = ps.pricing_option_type(pos)
             key = (pos.symbol, pos.expiration, pos.strike, ot)

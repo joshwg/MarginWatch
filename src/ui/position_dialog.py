@@ -23,7 +23,7 @@ class PositionDialog(tk.Toplevel):
         self._build(row)
         self.transient(parent)
         self.update()
-        w = self.winfo_reqwidth()
+        w = max(self.winfo_reqwidth(), 320)
         h = self.winfo_reqheight()
         self.minsize(w, h)
         x = parent.winfo_rootx() + 100
@@ -31,6 +31,7 @@ class PositionDialog(tk.Toplevel):
         self.geometry(f"{w}x{h}+{x}+{y}")
         self.focus_force()
         self._sym_entry.focus_set()
+        self.grab_set()
         self.wait_window(self)
 
     def _build(self, row):
@@ -57,7 +58,8 @@ class PositionDialog(tk.Toplevel):
         lbl("Type:", 2)
         self._type = tk.StringVar(value=r.get("option_type", "PUT"))
         type_cb = ttk.Combobox(self, textvariable=self._type,
-                               values=["CALL", "PUT", "STOCK"], width=12, state="readonly")
+                               values=["CALL", "PUT", "CALL_SPREAD", "PUT_SPREAD", "STOCK"],
+                               width=14, state="readonly")
         type_cb.grid(row=2, column=1, padx=px, pady=py)
         type_cb.bind("<<ComboboxSelected>>", self._on_type_change)
 
@@ -79,37 +81,46 @@ class PositionDialog(tk.Toplevel):
         exp_entry.bind("<minus>", self._exp_minus_day)
 
         # Strike (row 4)
-        lbl("Strike:", 4)
+        lbl("Strike (short):", 4)
         self._strike = tk.StringVar(value=str(r.get("strike", "")))
         self._strike.trace_add("write", lambda *_: self._validate())
         self._strike_entry = ttk.Entry(self, textvariable=self._strike, width=12)
         self._strike_entry.grid(row=4, column=1, padx=px, pady=py)
 
-        # Quantity (row 5)
+        # Long strike (row 5, CALL/PUT spread only)
+        self._lstrike_lbl = ttk.Label(self, text="Long Strike:")
+        self._lstrike_lbl.grid(row=5, column=0, sticky=tk.W, padx=px, pady=py)
+        raw_ls = r.get("long_strike")
+        self._lstrike = tk.StringVar(value=str(raw_ls) if raw_ls else "")
+        self._lstrike.trace_add("write", lambda *_: self._validate())
+        self._lstrike_entry = ttk.Entry(self, textvariable=self._lstrike, width=12)
+        self._lstrike_entry.grid(row=5, column=1, padx=px, pady=py)
+
+        # Quantity (row 6)
         self._qty_lbl = ttk.Label(self, text="Qty:")
-        self._qty_lbl.grid(row=5, column=0, sticky=tk.W, padx=px, pady=py)
+        self._qty_lbl.grid(row=6, column=0, sticky=tk.W, padx=px, pady=py)
         self._qty = tk.StringVar(value=str(r.get("quantity", "")))
         self._qty.trace_add("write", lambda *_: self._validate())
-        ttk.Entry(self, textvariable=self._qty, width=12).grid(row=5, column=1, padx=px, pady=py)
+        ttk.Entry(self, textvariable=self._qty, width=12).grid(row=6, column=1, padx=px, pady=py)
 
-        # Long shares (row 6, STOCK only)
+        # Long shares (row 7, STOCK only)
         self._lshares_lbl = ttk.Label(self, text="Long Shares:")
-        self._lshares_lbl.grid(row=6, column=0, sticky=tk.W, padx=px, pady=py)
+        self._lshares_lbl.grid(row=7, column=0, sticky=tk.W, padx=px, pady=py)
         self._lshares = tk.StringVar(value=str(r.get("long_shares") or ""))
         self._lshares.trace_add("write", lambda *_: self._validate())
         self._lshares_entry = ttk.Entry(self, textvariable=self._lshares, width=12)
-        self._lshares_entry.grid(row=6, column=1, padx=px, pady=py)
+        self._lshares_entry.grid(row=7, column=1, padx=px, pady=py)
 
-        # Long cost (row 7, STOCK only)
-        lbl("Long Cost ($/shr):", 7)
+        # Long cost (row 8, STOCK only)
+        lbl("Long Cost ($/shr):", 8)
         self._lcost = tk.StringVar(value=str(r.get("long_cost") or ""))
         self._lcost.trace_add("write", lambda *_: self._validate())
         self._lcost_entry = ttk.Entry(self, textvariable=self._lcost, width=12)
-        self._lcost_entry.grid(row=7, column=1, padx=px, pady=py)
+        self._lcost_entry.grid(row=8, column=1, padx=px, pady=py)
 
-        # Action buttons (row 8)
+        # Action buttons (row 9)
         btn_frame = ttk.Frame(self)
-        btn_frame.grid(row=8, column=0, columnspan=2, pady=(6, 8))
+        btn_frame.grid(row=9, column=0, columnspan=2, pady=(6, 8))
         self._save_btn = ttk.Button(btn_frame, text="Save", command=self._save)
         self._save_btn.pack(side=tk.LEFT, padx=4)
         ttk.Button(btn_frame, text="Cancel", command=self.destroy).pack(side=tk.LEFT, padx=4)
@@ -127,6 +138,7 @@ class PositionDialog(tk.Toplevel):
             init = date.fromisoformat(self._exp_var.get())
         except ValueError:
             init = utils.next_option_friday()
+        self.grab_release()
         dlg = tk.Toplevel(self)
         dlg.title("Pick date")
         dlg.resizable(False, False)
@@ -144,6 +156,7 @@ class PositionDialog(tk.Toplevel):
         dlg.focus_force()
         dlg.grab_set()
         dlg.wait_window()
+        self.grab_set()
 
     def _exp_plus_day(self, _event=None):
         try:
@@ -176,6 +189,18 @@ class PositionDialog(tk.Toplevel):
                     float(s)
                 except ValueError:
                     error = "Strike must be a number."
+            if not error:
+                is_spread = ot in ("CALL_SPREAD", "PUT_SPREAD")
+                ls = self._lstrike.get().strip()
+                if is_spread and not ls:
+                    error = "Long strike is required for a spread."
+                elif ls:
+                    try:
+                        lsv = float(ls)
+                        if lsv == float(s):
+                            error = "Long strike must differ from short strike."
+                    except ValueError:
+                        error = "Long strike must be a number."
             if not error:
                 q = self._qty.get().strip()
                 if not q:
@@ -226,17 +251,23 @@ class PositionDialog(tk.Toplevel):
         return error
 
     def _on_type_change(self, _event=None):
-        is_stock = self._type.get() == "STOCK"
-        is_put = self._type.get() == "PUT"
+        ot = self._type.get()
+        is_stock = ot == "STOCK"
+        is_put = ot == "PUT"
+        is_spread = ot in ("CALL_SPREAD", "PUT_SPREAD")
         stock_state = "normal" if is_stock else "disabled"
+        spread_state = "normal" if is_spread else "disabled"
         self._lshares_entry.config(state=stock_state)
         self._lcost_entry.config(state=stock_state)
+        self._lstrike_entry.config(state=spread_state)
         if is_stock:
             self._qty_lbl.config(text="Contracts (0=no cover):")
             self._lshares_lbl.config(text="Long Shares (e.g. 500):")
         else:
             self._qty_lbl.config(text="Contracts:")
             self._lshares_lbl.config(text="Long Shares:")
+        if not is_spread:
+            self._lstrike.set("")
 
         # Show "Assigned" only when editing a PUT
         editing = self._row is not None
@@ -273,7 +304,8 @@ class PositionDialog(tk.Toplevel):
             "expiration": constants.NO_EXPIRATION,
             "quantity": 0,
             "long_shares": qty * 100,
-            "long_cost": strike,   # cost basis = put strike
+            "long_cost": strike,
+            "long_strike": None,
         }
         self.destroy()
 
@@ -299,6 +331,7 @@ class PositionDialog(tk.Toplevel):
             "quantity": 0,
             "long_shares": long_shares,
             "long_cost": long_cost,
+            "long_strike": None,
         }
         self.destroy()
 
@@ -320,6 +353,9 @@ class PositionDialog(tk.Toplevel):
             long_shares = utils.parse_int(ls, None)
             long_cost = utils.parse_float(lc, None)
 
+        ls_str = self._lstrike.get().strip()
+        long_strike = utils.parse_float(ls_str, None) if ls_str else None
+
         self.result = {
             "symbol": sym,
             "option_type": ot,
@@ -328,5 +364,6 @@ class PositionDialog(tk.Toplevel):
             "quantity": qty,
             "long_shares": long_shares,
             "long_cost": long_cost,
+            "long_strike": long_strike,
         }
         self.destroy()

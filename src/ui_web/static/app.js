@@ -39,6 +39,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     );
 
     document.getElementById('btnAdd').addEventListener('click', openAddModal);
+    document.getElementById('btnRefresh').addEventListener('click', refreshPrices);
     document.getElementById('btnSaveConfig').addEventListener('click', saveConfig);
     document.getElementById('positionForm').addEventListener('submit', savePosition);
     document.getElementById('fType').addEventListener('change', updateFormFields);
@@ -50,13 +51,25 @@ document.addEventListener('DOMContentLoaded', async () => {
 // Data loading
 // ---------------------------------------------------------------------------
 
+async function refreshPrices() {
+    const btn = document.getElementById('btnRefresh');
+    btn.disabled = true;
+    await fetch('/api/refresh', { method: 'POST' });
+    await loadPositions();
+    btn.disabled = false;
+}
+
 async function loadPositions() {
     const sort = document.querySelector('input[name="sort"]:checked').value;
-    const resp = await fetch(`/api/positions?sort=${sort}`);
-    if (resp.status === 401) { location.href = '/login'; return; }
-    const data = await resp.json();
-    _positions = data.positions;
-    updateSummary(data.summary);
+    try {
+        const resp = await fetch(`/api/positions?sort=${sort}`);
+        if (resp.status === 401) { location.href = '/login'; return; }
+        const data = await resp.json();
+        _positions = data.positions;
+        updateSummary(data.summary);
+    } catch (e) {
+        _positions = [];
+    }
     renderTable();
 }
 
@@ -142,6 +155,12 @@ function renderTable() {
         nameSpan.textContent = pos.abbrev;
         if (pos.is_stock_row) nameSpan.className = 'mw-stock-pos';
         posCell.appendChild(nameSpan);
+        if (pos.abbrev2) {
+            const line2 = document.createElement('div');
+            line2.textContent = pos.abbrev2;
+            line2.style.cssText = 'font-size:0.78em;opacity:0.75';
+            posCell.appendChild(line2);
+        }
 
         const qtyCell    = mkTd(pos.qty,                   'text-center');
         const marginCell = mkTd(pos.margin.toFixed(1),     'text-end');
@@ -225,6 +244,7 @@ function openAddModal() {
     document.getElementById('positionModalTitle').textContent = 'Add Position';
     document.getElementById('positionForm').reset();
     document.getElementById('fQty').value = '1';
+    document.getElementById('fLongStrike').value = '';
     document.getElementById('btnAssigned').classList.add('d-none');
     document.getElementById('btnClearCover').classList.add('d-none');
     updateFormFields();
@@ -246,6 +266,7 @@ async function editPosition(id) {
     document.getElementById('fQty').value         = pos.quantity || 1;
     document.getElementById('fShares').value      = pos.long_shares || '';
     document.getElementById('fCost').value        = pos.long_cost || '';
+    document.getElementById('fLongStrike').value  = pos.long_strike || '';
 
     document.getElementById('btnAssigned')
         .classList.toggle('d-none', pos.option_type !== 'PUT');
@@ -266,6 +287,7 @@ async function savePosition(e) {
         quantity:    parseInt(document.getElementById('fQty').value) || 1,
         long_shares: parseInt(document.getElementById('fShares').value) || null,
         long_cost:   parseFloat(document.getElementById('fCost').value) || null,
+        long_strike: parseFloat(document.getElementById('fLongStrike').value) || null,
     };
     const url    = _editId ? `/api/positions/${_editId}` : '/api/positions';
     const method = _editId ? 'PUT' : 'POST';
@@ -301,10 +323,15 @@ async function mergePositions(symbol, expiration, strike) {
 // ---------------------------------------------------------------------------
 
 function updateFormFields() {
-    const isStock = document.getElementById('fType').value === 'STOCK';
+    const ot = document.getElementById('fType').value;
+    const isStock  = ot === 'STOCK';
+    const isSpread = ot === 'CALL_SPREAD' || ot === 'PUT_SPREAD';
     document.getElementById('rowShares').classList.toggle('d-none', !isStock);
     document.getElementById('rowCost').classList.toggle('d-none', !isStock);
+    document.getElementById('rowLongStrike').classList.toggle('d-none', !isSpread);
+    document.getElementById('strikeLabel').textContent = isSpread ? 'Strike (short)' : 'Strike';
     document.getElementById('qtyLabel').textContent = isStock ? 'Quantity' : 'Contracts';
+    if (!isSpread) document.getElementById('fLongStrike').value = '';
 }
 
 function applyAssigned() {

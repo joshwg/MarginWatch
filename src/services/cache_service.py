@@ -16,7 +16,7 @@ class CacheService:
 
     Call fetch_all() after loading positions, then use the accessor methods
     (price, opt_price, theta) to read cached values without hitting the network.
-    Stock prices expire after 60 s; call fetch_price() to get a fresh value.
+    Stock prices expire after 10 min; call fetch_price() to get a fresh value.
     """
 
     def __init__(self):
@@ -76,6 +76,11 @@ class CacheService:
             if key not in self._opt_price:
                 self._opt_price[key] = mds.fetch_option_theoretical_price(
                     pos.symbol, pos.expiration, pos.strike, ot)
+            if ps.is_spread(pos):
+                long_key = (pos.symbol, pos.expiration, pos.long_strike, ot)
+                if long_key not in self._opt_price:
+                    self._opt_price[long_key] = mds.fetch_option_theoretical_price(
+                        pos.symbol, pos.expiration, pos.long_strike, ot)
 
     def _fetch_theta(self, positions: list[Position]) -> None:
         for pos in positions:
@@ -86,3 +91,8 @@ class CacheService:
             if key not in self._theta:
                 self._theta[key] = mds.fetch_option_theta(
                     pos.symbol, pos.expiration, pos.strike, ot)
+            if ps.is_spread(pos):
+                long_key = (pos.symbol, pos.expiration, pos.long_strike, ot)
+                if long_key not in self._theta:
+                    self._theta[long_key] = mds.fetch_option_theta(
+                        pos.symbol, pos.expiration, pos.long_strike, ot)

@@ -9,13 +9,12 @@ from models import Position
 
 
 def _cleanup_expired(conn) -> None:
-    """On Mondays, soft-close OPEN CALL/PUT rows whose expiration has passed."""
-    if date.today().weekday() != 0:   # 0 = Monday
-        return
+    """Delete any CALL/PUT/spread rows whose expiration date has passed."""
     today = date.today().isoformat()
     conn.execute(
-        "UPDATE positions SET status='CLOSED'"
-        " WHERE status='OPEN' AND option_type IN ('CALL','PUT') AND expiration < ?",
+        "DELETE FROM positions"
+        " WHERE option_type IN ('CALL','PUT','CALL_SPREAD','PUT_SPREAD')"
+        " AND expiration < ?",
         (today,),
     )
     conn.commit()
@@ -25,7 +24,7 @@ def get_open_positions() -> list[Position]:
     """Run expiry cleanup then return all OPEN positions."""
     with db.get_connection() as conn:
         _cleanup_expired(conn)
-        rows = conn.execute("SELECT * FROM positions WHERE status='OPEN'").fetchall()
+        rows = conn.execute("SELECT * FROM positions").fetchall()
     return [Position.from_row(r) for r in rows]
 
 
@@ -45,10 +44,11 @@ def insert_position(d: dict) -> None:
         conn.execute(
             "INSERT INTO positions"
             " (symbol, option_type, strike, expiration, quantity,"
-            "  open_date, long_shares, long_cost)"
-            " VALUES (?,?,?,?,?,?,?,?)",
+            "  open_date, long_shares, long_cost, long_strike)"
+            " VALUES (?,?,?,?,?,?,?,?,?)",
             (d["symbol"], d["option_type"], d["strike"], d["expiration"],
-             d["quantity"], today, d["long_shares"], d["long_cost"]),
+             d["quantity"], today, d["long_shares"], d["long_cost"],
+             d.get("long_strike")),
         )
         conn.commit()
 
@@ -58,10 +58,11 @@ def update_position(row_id: int, d: dict) -> None:
     with db.get_connection() as conn:
         conn.execute(
             "UPDATE positions SET symbol=?, option_type=?, strike=?,"
-            " expiration=?, quantity=?, long_shares=?, long_cost=?"
+            " expiration=?, quantity=?, long_shares=?, long_cost=?, long_strike=?"
             " WHERE id=?",
             (d["symbol"], d["option_type"], d["strike"], d["expiration"],
-             d["quantity"], d["long_shares"], d["long_cost"], row_id),
+             d["quantity"], d["long_shares"], d["long_cost"],
+             d.get("long_strike"), row_id),
         )
         conn.commit()
 
@@ -85,7 +86,7 @@ def merge_stock_positions(symbol: str, expiration: str, strike: float) -> None:
     with db.get_connection() as conn:
         all_rows = conn.execute(
             "SELECT id, long_shares, long_cost, strike, expiration FROM positions"
-            " WHERE status='OPEN' AND option_type='STOCK' AND symbol=?",
+            " WHERE option_type='STOCK' AND symbol=?",
             (symbol,),
         ).fetchall()
 

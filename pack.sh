@@ -13,6 +13,7 @@ tar -czf "$OUT" \
     --exclude='*.pyc' \
     --exclude='*.pyo' \
     -C "$(dirname "$SCRIPT_DIR")" \
-    "$(basename "$SCRIPT_DIR")"
+    "$(basename "$SCRIPT_DIR")" \
+    option_lib
 
 echo "Created: $OUT"

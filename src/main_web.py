@@ -61,17 +61,32 @@ def _compute_display(pos: Position, cache: CacheService) -> dict:
     price = cache.price(pos.symbol)
     opt_price = cache.opt_price(key) if pos.strike else None
     theta = cache.theta(key) if pos.strike else None
-    td = ps.theta_dollars(pos, theta)
+
+    if ps.is_spread(pos):
+        long_key = (pos.symbol, pos.expiration, pos.long_strike, ot)
+        long_opt = cache.opt_price(long_key)
+        long_theta = cache.theta(long_key)
+        net_opt = (opt_price - long_opt) if (opt_price is not None and long_opt is not None) else None
+        opt_str = f"{net_opt:.2f}" if net_opt is not None else "—"
+        td = ps.theta_dollars(pos, theta, long_theta)
+        short_line, long_line = ps.spread_leg_abbrevs(pos)
+        short_line, long_line = (short_line, long_line) if ps.is_credit_spread(pos) else (long_line, short_line)
+    else:
+        long_line = None
+        opt_str = f"{opt_price:.2f}" if opt_price is not None else "—"
+        td = ps.theta_dollars(pos, theta)
+
     days = ps.days_to_expiry(pos)
     bg = styles.expiry_color(days)
     return {
-        "abbrev": ps.position_abbrev(pos),
+        "abbrev": short_line if ps.is_spread(pos) else ps.position_abbrev(pos),
+        "abbrev2": long_line,
         "qty": ps.display_quantity(pos),
         "margin": ps.margin_k(pos),
         "bg": bg,
         "fg": styles.text_color(bg),
         "itm": ps.is_itm(pos, price),
-        "opt_str": f"{opt_price:.2f}" if opt_price is not None else "—",
+        "opt_str": opt_str,
         "theta_dollars": td,
         "theta_str": f"${round(td):,d}" if td is not None else "—",
         "is_stock_row": ps.is_stock(pos),
@@ -208,7 +223,9 @@ def api_positions():
             "quantity": pos.quantity,
             "long_shares": pos.long_shares,
             "long_cost": pos.long_cost,
+            "long_strike": pos.long_strike,
             "abbrev": display["abbrev"],
+            "abbrev2": display["abbrev2"],
             "qty": display["qty"],
             "margin": round(display["margin"], 1),
             "bg": display["bg"],
@@ -233,6 +250,12 @@ def api_positions():
             "total_theta": round(total_theta_day),
         },
     })
+
+
+@app.route("/api/refresh", methods=["POST"])
+def api_refresh():
+    _cache.__init__()
+    return jsonify({"ok": True})
 
 
 @app.route("/api/positions/merge", methods=["POST"])
@@ -287,6 +310,7 @@ def _normalize_position_data(d: dict) -> None:
     d["quantity"] = int(d.get("quantity") or 1)
     d["long_shares"] = int(d["long_shares"]) if d.get("long_shares") else None
     d["long_cost"] = float(d["long_cost"]) if d.get("long_cost") else None
+    d["long_strike"] = float(d["long_strike"]) if d.get("long_strike") else None
     if not d.get("expiration"):
         d["expiration"] = constants.NO_EXPIRATION
 
@@ -373,6 +397,31 @@ def _build_csv_rows(positions: list) -> list[list]:
                 ])
             else:
                 rows.append([stock_label, stock_margin, pos.long_shares or 0, "", "", ""])
+        elif ps.is_spread(pos):
+            ot = ps.pricing_option_type(pos)
+            short_key = (pos.symbol, pos.expiration, pos.strike, ot)
+            long_key  = (pos.symbol, pos.expiration, pos.long_strike, ot)
+            short_theta = _cache.theta(short_key)
+            long_theta  = _cache.theta(long_key)
+            short_abbrev, long_abbrev = ps.spread_leg_abbrevs(pos)
+            short_td = round(-short_theta * pos.quantity * 100, 2) if short_theta is not None else ""
+            long_td  = round(long_theta  * pos.quantity * 100, 2) if long_theta  is not None else ""
+            rows.append([
+                short_abbrev,
+                round(ps.margin_k(pos), 2),
+                pos.quantity,
+                short_td,
+                pos.expiration or "",
+                round(short_theta, 4) if short_theta is not None else "",
+            ])
+            rows.append([
+                long_abbrev,
+                0,
+                pos.quantity,
+                long_td,
+                pos.expiration or "",
+                round(long_theta, 4) if long_theta is not None else "",
+            ])
         else:
             ot = ps.pricing_option_type(pos)
             key = (pos.symbol, pos.expiration, pos.strike, ot)

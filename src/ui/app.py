@@ -15,6 +15,7 @@ import repositories.config_repository as cfg_repo
 from services.cache_service import CacheService
 import services.export_service as export_service
 import services.position_service as ps
+from ui.position_dialog import PositionDialog
 from ui.position_row import compute_display, build_row
 
 
@@ -56,6 +57,8 @@ class MarginWatchApp(tk.Tk):
         cfg_repo.save(margin, multiplier)
         self._config["MaximumMarginBasis"] = str(margin)
         self._config["MarginMultiplier"] = str(multiplier)
+        self._config_saved_lbl.config(text="Requirements Saved")
+        self.after(3000, lambda: self._config_saved_lbl.config(text=""))
 
     # ------------------------------------------------------------------
     # UI construction
@@ -95,11 +98,13 @@ class MarginWatchApp(tk.Tk):
         ttk.Radiobutton(sort_frame, text="Type", variable=self._sort_var,
                         value="type", command=self._on_sort_change).pack(side=tk.LEFT)
 
-        # Right: + button and export button
+        # Right: +, refresh, and export buttons
         plus_frame = ttk.Frame(top_bar)
         plus_frame.pack(side=tk.RIGHT, padx=6)
         ttk.Button(plus_frame, text="+", width=3,
                    command=self._add_position).pack(side=tk.LEFT, expand=True, pady=4)
+        ttk.Button(plus_frame, text="↻", width=3,
+                   command=self._force_refresh).pack(side=tk.LEFT, expand=True, pady=4)
         ttk.Button(plus_frame, text="💾", width=3,
                    command=self._export_xlsx).pack(side=tk.LEFT, expand=True, pady=4)
 
@@ -163,9 +168,11 @@ class MarginWatchApp(tk.Tk):
                     textvariable=self._multiplier_var, width=6,
                     format="%.1f").grid(row=1, column=1, padx=6, pady=(2, 4), sticky=tk.W)
 
-        ttk.Button(config_frame, text="Save",
-                   command=self._save_config).grid(
-            row=2, column=0, columnspan=2, padx=6, pady=(0, 8), sticky=tk.E)
+        save_row = ttk.Frame(config_frame)
+        save_row.grid(row=2, column=0, columnspan=2, padx=6, pady=(0, 8), sticky=tk.E)
+        ttk.Button(save_row, text="Save", command=self._save_config).pack(side=tk.LEFT)
+        self._config_saved_lbl = ttk.Label(save_row, text="", foreground="green")
+        self._config_saved_lbl.pack(side=tk.LEFT, padx=(8, 0))
 
     def _deferred_load(self):
         print("Loading positions...")
@@ -254,6 +261,10 @@ class MarginWatchApp(tk.Tk):
             font=("TkDefaultFont", 9, "bold") if avail < 0 else ("TkDefaultFont", 9),
         )
 
+    def _force_refresh(self):
+        self._cache.__init__()
+        self._refresh_positions()
+
     def _refresh_positions(self):
         if self._refreshing:
             self._refresh_pending = True
@@ -333,7 +344,6 @@ class MarginWatchApp(tk.Tk):
     # ------------------------------------------------------------------
 
     def _add_position(self):
-        from ui.position_dialog import PositionDialog
         dlg = PositionDialog(self)
         if dlg.result:
             d = dlg.result
@@ -342,7 +352,6 @@ class MarginWatchApp(tk.Tk):
             self._refresh_positions()
 
     def _edit_position(self, row_id: int):
-        from ui.position_dialog import PositionDialog
         pos = pos_repo.get_position(row_id)
         if not pos:
             return

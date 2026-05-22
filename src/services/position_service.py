@@ -33,29 +33,69 @@ def is_put(pos: Position) -> bool:
     return pos.option_type == "PUT"
 
 
+def is_call_spread(pos: Position) -> bool:
+    return pos.option_type == "CALL_SPREAD"
+
+
+def is_put_spread(pos: Position) -> bool:
+    return pos.option_type == "PUT_SPREAD"
+
+
 def has_covered_call(pos: Position) -> bool:
     """True when pos is a STOCK position with a covered call written (strike > 0)."""
     return pos.option_type == "STOCK" and bool(pos.strike)
 
 
+def is_spread(pos: Position) -> bool:
+    """True when pos is a vertical spread (CALL_SPREAD or PUT_SPREAD)."""
+    return pos.option_type in ("CALL_SPREAD", "PUT_SPREAD")
+
+
+def is_credit_spread(pos: Position) -> bool:
+    """True when the spread is a credit spread (margin required).
+
+    Bear call spread: short strike < long strike (sold lower, bought higher).
+    Bull put spread:  short strike > long strike (sold higher, bought lower).
+    Debit spreads are the opposite and carry no margin.
+    """
+    if not is_spread(pos):
+        return False
+    if is_call_spread(pos):
+        return pos.strike < (pos.long_strike or 0)
+    return pos.strike > (pos.long_strike or 0)
+
+
 def pricing_option_type(pos: Position) -> str:
     """Option type string for pricing lookups.
     STOCK rows price as CALL (the covered call written against them).
+    CALL_SPREAD/PUT_SPREAD price as CALL/PUT for each leg.
     """
-    return "CALL" if is_stock(pos) else pos.option_type
+    if is_stock(pos):
+        return "CALL"
+    if is_call_spread(pos):
+        return "CALL"
+    if is_put_spread(pos):
+        return "PUT"
+    return pos.option_type
 
 
 # ---------------------------------------------------------------------------
 # Business calculations
 # ---------------------------------------------------------------------------
 
-def theta_dollars(pos: Position, theta) -> float | None:
-    """Daily theta in dollars for a short position, or None if theta unavailable.
-    Negated because positive quantity = short contracts (positive theta decay benefits us).
+def theta_dollars(pos: Position, theta, long_theta=None) -> float | None:
+    """Daily theta in dollars, or None if theta unavailable.
+
+    For naked positions: short gain = -theta × 100 × qty.
+    For spreads: net = short gain + long loss = (-theta_short + theta_long) × 100 × qty.
+    Both thetas are negative from the pricing model; seller gains, buyer loses.
     """
     if theta is None:
         return None
-    return -theta * 100 * pos.quantity
+    short_gain = -theta * 100 * pos.quantity
+    if is_spread(pos) and long_theta is not None:
+        return short_gain + (long_theta * 100 * pos.quantity)
+    return short_gain
 
 
 def is_profitable(pos: Position, price) -> bool:
@@ -69,12 +109,12 @@ def is_profitable(pos: Position, price) -> bool:
 
 
 def is_itm(pos: Position, current_price) -> bool:
-    """True when the option leg is in-the-money."""
+    """True when the short leg is in-the-money."""
     if current_price is None:
         return False
-    if is_call(pos):
+    if is_call(pos) or is_call_spread(pos):
         return current_price > pos.strike
-    if is_put(pos):
+    if is_put(pos) or is_put_spread(pos):
         return current_price < pos.strike
     if has_covered_call(pos):
         return current_price > pos.strike
@@ -84,13 +124,20 @@ def is_itm(pos: Position, current_price) -> bool:
 def margin_k(pos: Position) -> float:
     """Margin in $k.
     STOCK (covered or not): long_shares × long_cost ÷ 1000.
-    CALL/PUT naked: strike × qty × 100 shares ÷ 1000 → $k.
+    CALL/PUT naked: strike × qty × 100 ÷ 1000 → $k.
+    Credit spread: |long_strike − short_strike| × qty × 100 ÷ 1000 → $k.
+    Debit spread: 0 (max loss is the debit paid, not tracked here).
     """
     if is_stock(pos):
         shares = pos.long_shares or 0
         cost = pos.long_cost or 0.0
         return shares * cost / 1000.0
-    return pos.strike * pos.quantity / 10.0  # strike × qty × 100 shares ÷ 1000 → $k
+    if is_spread(pos):
+        if not is_credit_spread(pos):
+            return 0.0
+        width = abs((pos.long_strike or 0.0) - pos.strike)
+        return width * pos.quantity / 10.0
+    return pos.strike * pos.quantity / 10.0
 
 
 # ---------------------------------------------------------------------------
@@ -106,15 +153,26 @@ def position_abbrev(pos: Position) -> str:
         exp = date.fromisoformat(pos.expiration)
         return f"{sym}{exp.strftime('%y-%m-%d')} {_format_strike(pos.strike)}c"
     exp = date.fromisoformat(pos.expiration)
-    cp = "c" if is_call(pos) else "p"
+    cp = "c" if pos.option_type in ("CALL", "CALL_SPREAD") else "p"
+    if is_spread(pos):
+        return f"{sym}{exp.strftime('%y-%m-%d')} {_format_strike(pos.strike)}/{_format_strike(pos.long_strike)}{cp}"
     return f"{sym}{exp.strftime('%y-%m-%d')} {_format_strike(pos.strike)}{cp}"
+
+
+def spread_leg_abbrevs(pos: Position) -> tuple[str, str]:
+    """Return (short_leg_line, long_leg_line) for two-line display of a spread."""
+    exp = date.fromisoformat(pos.expiration)
+    cp = "c" if is_call_spread(pos) else "p"
+    short_line = f"{pos.symbol}{exp.strftime('%y-%m-%d')} {_format_strike(pos.strike)}{cp}"
+    long_line  = f"{pos.symbol}{exp.strftime('%y-%m-%d')} {_format_strike(pos.long_strike)}{cp}"
+    return short_line, long_line
 
 
 def days_to_expiry(pos: Position) -> int:
     """Days until expiry. STOCK with no cover returns a large sentinel."""
     if is_stock(pos) and not pos.strike:
         return 9999
-    return (date.fromisoformat(pos.expiration) - date.today()).days
+    return (date.fromisoformat(pos.expiration) - date.today()).days  # type: ignore[arg-type]
 
 
 def can_merge_stock(p1: Position, p2: Position) -> bool:
