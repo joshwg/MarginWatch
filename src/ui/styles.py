@@ -7,13 +7,13 @@ def expiry_color(days: int) -> str:
     """Background colour for a row based on days until expiry."""
     if days < 0:
         return constants.EXPIRY_EXPIRED
-    elif days <= 7:
+    elif days <= 6:
         return constants.EXPIRY_WEEK
-    elif days <= 14:
+    elif days <= 13:
         return constants.EXPIRY_TWOWEEKS
-    elif days <= 21:
+    elif days <= 20:
         return constants.EXPIRY_THREEWEEKS
-    elif days <= 28:
+    elif days <= 27:
         return constants.EXPIRY_FOURWEEKS
     else:
         return constants.EXPIRY_DISTANT

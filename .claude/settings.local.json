@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(Get-ChildItem -Path \"c:\\\\Users\\\\josh\\\\Docs\\\\lab\\\\MarginWatch\" -Recurse -File | ForEach-Object { $_.FullName } | Sort-Object)",
+      "PowerShell(Get-ChildItem -Path \"c:\\\\Users\\\\josh\\\\Docs\\\\lab\\\\MarginWatch\" -Directory | ForEach-Object { $_.FullName } | Sort-Object)"
+    ]
+  }
+}

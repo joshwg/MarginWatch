@@ -1,0 +1,40 @@
+/* MarginWatch web UI — supplemental styles on top of Bootstrap */
+
+.mw-app { max-width: 560px; }
+
+.mw-summary { min-width: 105px; }
+.mw-val { min-width: 58px; display: inline-block; text-align: right; }
+
+/* Table scroll container */
+.mw-table-wrap { max-height: 760px; overflow-y: auto; }
+
+/* Sticky header inside scroll */
+#positionsTable thead th { position: sticky; top: 0; z-index: 1; }
+
+/* Sortable header cursor */
+#positionsTable thead th.sortable { cursor: pointer; user-select: none; }
+#positionsTable thead th.sortable:hover { background-color: #d0d5db; }
+
+/* Actions column width */
+.mw-actions-col { width: 76px; }
+
+/* Force row background through Bootstrap's table-bg variable */
+#positionsTable tbody tr { --bs-table-bg: transparent; }
+#positionsTable tbody tr td { background-color: inherit; }
+
+/* ITM / profit indicator swatches */
+.mw-ind {
+  display: inline-block;
+  width: 6px;
+  height: 12px;
+  border-radius: 1px;
+  margin-right: 2px;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+
+/* Stock row: underlined position name */
+.mw-stock-pos { text-decoration: underline; }
+
+/* Negative available margin */
+.mw-danger { color: #dc3545 !important; font-weight: 700; }

@@ -1,7 +1,7 @@
 import os
 import sqlite3
 
-DB_DIR = os.path.join(os.path.dirname(__file__), "data")
+DB_DIR = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "data"))
 DB_PATH = os.path.join(DB_DIR, "marginwatch.db")
 
 DEFAULT_CONFIG = {

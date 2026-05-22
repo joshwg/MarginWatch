@@ -7,6 +7,13 @@
 NO_EXPIRATION = "9999-12-31"
 
 # ---------------------------------------------------------------------------
+# Web server
+# ---------------------------------------------------------------------------
+
+WEB_PORT = 5000
+SESSION_TIMEOUT_MINUTES = 240  # 4 hours of inactivity logs the user out
+
+# ---------------------------------------------------------------------------
 # Expiry row background colors
 # ---------------------------------------------------------------------------
 
@@ -15,14 +22,13 @@ EXPIRY_WEEK       = "#A5CDAA"
 EXPIRY_TWOWEEKS   = "#F2E1A9"
 EXPIRY_THREEWEEKS = "#ffc8c8"
 EXPIRY_FOURWEEKS  = "#ADD8E6"
-EXPIRY_DISTANT    = "#FFD5A8"
-
+EXPIRY_DISTANT    = "#FFB347"
 # ---------------------------------------------------------------------------
 # Indicator swatch colors
 # ---------------------------------------------------------------------------
 
 ITM_INDICATOR    = "#8A2BE2"
-PROFIT_INDICATOR = "#d6109b"
+STOCK_GAIN_INDICATOR = "#d6109b"
 
 # ---------------------------------------------------------------------------
 # Tooltip background

@@ -70,7 +70,7 @@ def build_row(
     # Profit indicator swatch
     profit_canvas = tk.Canvas(row_frame, width=6, height=16, bg=bg, highlightthickness=0)
     if display["is_profitable"]:
-        profit_canvas.create_rectangle(1, 2, 5, 14, fill=constants.PROFIT_INDICATOR, outline="")
+        profit_canvas.create_rectangle(1, 2, 5, 14, fill=constants.STOCK_GAIN_INDICATOR, outline="")
     profit_canvas.pack(side=tk.LEFT)
 
     pos_font = ("TkDefaultFont", 8, "underline") if display["is_stock_row"] else ("TkDefaultFont", 8)

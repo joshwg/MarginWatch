@@ -11,26 +11,49 @@ A small desktop app for tracking naked option and covered-call positions and the
 
 ```bash
 python3 -m venv venv
-venv/bin/pip install yfinance
-venv/bin/python db.py        # initialize the database
+venv/bin/pip install -r src/requirements.txt
 ```
+
+The database is created automatically on first run.
 
 ## Running
 
+### Desktop app (Tkinter)
+
 ```bash
-DISPLAY=:0 venv/bin/python main.py
+export PYTHONPATH=src
+venv/bin/python src/main.py
 ```
 
 > Requires an X server (WSLg on Windows 11, or VcXsrv/X410 on Windows 10).
 
+### Web service (Flask)
+
+```bash
+export PYTHONPATH=src
+export MARGIN_PWD=yourpassword
+venv/bin/python src/main_web.py
+```
+
+Then open `http://localhost:5000` in a browser. `MARGIN_PWD` is required — the server refuses to start without it.
+
 ## Project Structure
 
-| File | Purpose |
-|---|---|
-| `main.py` | Tkinter UI — positions panel + config panel |
-| `db.py` | SQLite schema, migrations, connection helper |
-| `positions_data.py` | Display helpers, yfinance price fetching, expiry cleanup |
-| `data/marginwatch.db` | SQLite database (created on first run) |
+```
+src/
+  main.py            desktop entry point (Tkinter)
+  main_web.py        web entry point (Flask)
+  db.py              SQLite schema, migrations, connection helper
+  models.py          Position dataclass
+  constants.py       shared constants
+  utils.py           misc helpers
+  repositories/      database access layer
+  services/          business logic (positions, market data, cache, export)
+  ui/                Tkinter widgets
+  ui_web/            Flask templates and static assets
+data/
+  marginwatch.db     SQLite database (created on first run)
+```
 
 ## Position Types
 
