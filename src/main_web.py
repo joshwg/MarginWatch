@@ -95,6 +95,17 @@ def _compute_display(pos: Position, cache: CacheService) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Error handling
+# ---------------------------------------------------------------------------
+
+@app.errorhandler(Exception)
+def handle_exception(e):
+    import traceback
+    app.logger.error(traceback.format_exc())
+    return jsonify({"error": str(e)}), 500
+
+
+# ---------------------------------------------------------------------------
 # Auth
 # ---------------------------------------------------------------------------
 
@@ -121,7 +132,7 @@ def _touch_session() -> None:
 
 @app.before_request
 def check_auth():
-    if request.endpoint in ("login", "static"):
+    if request.endpoint in ("login", "static", "api_price", "api_optprice"):
         return
     if not _is_authenticated():
         if request.path.startswith("/api/") or request.path == "/export/csv":
@@ -250,6 +261,44 @@ def api_positions():
             "total_theta": round(total_theta_day),
         },
     })
+
+
+@app.route("/api/price/<symbol>")
+def api_price(symbol: str):
+    """Public endpoint to test stock price fetching — no auth required."""
+    import yfinance as yf
+    sym = symbol.upper()
+    try:
+        price = yf.Ticker(sym).fast_info.last_price
+        return jsonify({"symbol": sym, "price": price})
+    except Exception as e:
+        return jsonify({"symbol": sym, "price": None, "error": str(e)})
+
+
+@app.route("/api/optprice/<symbol>/<expiration>/<strike>/<otype>")
+def api_optprice(symbol: str, expiration: str, strike: str, otype: str):
+    """Public endpoint to test option pricing via option_lib — no auth required.
+
+    Example: /api/optprice/AAPL/2025-06-20/200/PUT
+    """
+    sym = symbol.upper()
+    ot  = otype.upper()
+    try:
+        k = float(strike)
+    except ValueError:
+        return jsonify({"error": f"invalid strike: {strike}"}), 400
+    try:
+        from option_lib.yahoo_data import (fetch_option_theoretical_price,
+                                            fetch_option_theta)
+        price = fetch_option_theoretical_price(sym, expiration, k, ot)
+        theta = fetch_option_theta(sym, expiration, k, ot)
+        return jsonify({"symbol": sym, "expiration": expiration,
+                        "strike": k, "option_type": ot,
+                        "price": price, "theta": theta})
+    except Exception as e:
+        return jsonify({"symbol": sym, "expiration": expiration,
+                        "strike": k, "option_type": ot,
+                        "price": None, "theta": None, "error": str(e)})
 
 
 @app.route("/api/refresh", methods=["POST"])

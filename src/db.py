@@ -52,29 +52,14 @@ def _migrate_positions(conn: sqlite3.Connection) -> None:
     needs_recreate = "'STOCK'" not in schema_sql or "'CALL_SPREAD'" not in schema_sql
 
     if needs_recreate:
-        conn.execute("ALTER TABLE positions RENAME TO _positions_old")
-        conn.execute(_CREATE_POSITIONS)
-        # Copy all columns that exist in the old table so optional columns are never silently dropped.
-        old_cols = {row[1] for row in conn.execute("PRAGMA table_info(_positions_old)")}
-        base_cols = ["id", "symbol", "option_type", "strike", "expiration",
-                     "quantity", "open_date"]
-        optional_cols = ["long_shares", "long_cost", "long_strike"]
-        copy_cols = base_cols + [c for c in optional_cols if c in old_cols]
-        cols_sql = ", ".join(copy_cols)
-        conn.execute(f"INSERT INTO positions ({cols_sql}) SELECT {cols_sql} FROM _positions_old")
-        conn.execute("DROP TABLE _positions_old")
+        conn.execute("DROP TABLE positions")
         return
 
-    # Just add missing columns / drop removed columns on existing schema
+    # Add any missing optional columns
     existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(positions)")}
     for col, defn in [("long_shares", "INTEGER"), ("long_cost", "REAL"), ("long_strike", "REAL")]:
         if col not in existing_cols:
             conn.execute(f"ALTER TABLE positions ADD COLUMN {col} {defn}")
-    # over zealous dropping columns.  We don't need to do this
-    # if "close_date" in existing_cols:
-    #     conn.execute("ALTER TABLE positions DROP COLUMN close_date")
-    # if "status" in existing_cols:
-    #     conn.execute("ALTER TABLE positions DROP COLUMN status")
 
 
 def init_db() -> None:

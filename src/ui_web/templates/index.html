@@ -91,6 +91,7 @@
         </div>
         <div class="col-auto">
           <button class="btn btn-sm btn-primary" id="btnSaveConfig">Save</button>
+          <span id="cfgSavedMsg" class="ms-2 text-success small" style="display:none">Saved</span>
         </div>
       </div>
     </div>
@@ -119,7 +120,7 @@
             <div class="col-8">
               <select class="form-select form-select-sm" id="fType">
                 <option value="CALL">CALL</option>
-                <option value="PUT">PUT</option>
+                <option value="PUT" selected>PUT</option>
                 <option value="CALL_SPREAD">CALL_SPREAD</option>
                 <option value="PUT_SPREAD">PUT_SPREAD</option>
                 <option value="STOCK">STOCK</option>

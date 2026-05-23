@@ -38,6 +38,16 @@ document.addEventListener('DOMContentLoaded', async () => {
         })
     );
 
+    document.getElementById('fSymbol').addEventListener('input', function () {
+        const pos = this.selectionStart;
+        this.value = this.value.toUpperCase();
+        this.setSelectionRange(pos, pos);
+    });
+
+    document.getElementById('confirmModal').addEventListener('hide.bs.modal', () => {
+        if (document.activeElement?.closest('#confirmModal')) document.activeElement.blur();
+    });
+
     document.getElementById('btnAdd').addEventListener('click', openAddModal);
     document.getElementById('btnRefresh').addEventListener('click', refreshPrices);
     document.getElementById('btnSaveConfig').addEventListener('click', saveConfig);
@@ -232,7 +242,12 @@ async function saveConfig() {
             SortOrder: sort,
         }),
     });
-    if (resp.ok) loadPositions();
+    if (resp.ok) {
+        loadPositions();
+        const msg = document.getElementById('cfgSavedMsg');
+        msg.style.display = 'inline';
+        setTimeout(() => { msg.style.display = 'none'; }, 3000);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -303,7 +318,9 @@ async function savePosition(e) {
 }
 
 async function deletePosition(id) {
-    if (!await confirmDialog('Delete this position?')) return;
+    const pos = _positions.find(p => p.id === id);
+    const label = pos ? pos.abbrev : 'this position';
+    if (!await confirmDialog(`Delete ${label}?`)) return;
     const resp = await fetch(`/api/positions/${id}`, { method: 'DELETE' });
     if (resp.ok) loadPositions();
 }
