@@ -95,6 +95,14 @@ def _compute_display(pos: Position, cache: CacheService) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Debug guard
+# ---------------------------------------------------------------------------
+
+def _debug_enabled():
+    return os.environ.get("MARGIN_DEBUG") == "1"
+
+
+# ---------------------------------------------------------------------------
 # Error handling
 # ---------------------------------------------------------------------------
 
@@ -265,7 +273,9 @@ def api_positions():
 
 @app.route("/api/price/<symbol>")
 def api_price(symbol: str):
-    """Public endpoint to test stock price fetching — no auth required."""
+    """Debug endpoint — requires MARGIN_DEBUG=1."""
+    if not _debug_enabled():
+        return jsonify({"error": "not found"}), 404
     import yfinance as yf
     sym = symbol.upper()
     try:
@@ -277,10 +287,12 @@ def api_price(symbol: str):
 
 @app.route("/api/optprice/<symbol>/<expiration>/<strike>/<otype>")
 def api_optprice(symbol: str, expiration: str, strike: str, otype: str):
-    """Public endpoint to test option pricing via option_lib — no auth required.
+    """Debug endpoint — requires MARGIN_DEBUG=1.
 
     Example: /api/optprice/AAPL/2025-06-20/200/PUT
     """
+    if not _debug_enabled():
+        return jsonify({"error": "not found"}), 404
     sym = symbol.upper()
     ot  = otype.upper()
     try:
