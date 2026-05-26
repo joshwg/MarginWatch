@@ -118,6 +118,22 @@ STOCK:            long_shares × long_cost ÷ 1000  ($k)
 
 Configuration is stored in the `config` table and editable from the bottom panel of the UI.
 
+## Environment Variables
+
+| Variable | Required | Description |
+|---|---|---|
+| `MARGIN_PWD` | Yes | Password for the web UI login page. The server refuses to start without it. |
+| `MARGIN_DEBUG` | No | Set to `1` to enable debug endpoints (see below). Omit or set to any other value to disable. |
+
+### Debug endpoints (require `MARGIN_DEBUG=1`)
+
+| Endpoint | Description |
+|---|---|
+| `GET /api/price/<SYMBOL>` | Fetches the live stock price via yfinance. Returns `{"symbol","price"}` or `{"error":"..."}` on failure. |
+| `GET /api/optprice/<SYMBOL>/<EXPIRATION>/<STRIKE>/<TYPE>` | Fetches the Black-Scholes theoretical price and theta via option_lib. Example: `/api/optprice/AAPL/2025-06-20/200/PUT`. |
+
+These endpoints bypass login so they can be tested with a plain browser or `curl`. Enable them temporarily for diagnostics, then remove `MARGIN_DEBUG` from the environment.
+
 ## Maintenance
 
 Expired `CALL`, `PUT`, `CALL_SPREAD`, and `PUT_SPREAD` positions are automatically deleted on the Monday after expiration.

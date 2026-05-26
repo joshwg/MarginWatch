@@ -233,9 +233,11 @@ def api_positions():
             seen_merge_groups.add(merge_key)
 
         exp_display = pos.expiration if pos.expiration != constants.NO_EXPIRATION else None
+        stock_price = _cache.price(pos.symbol)
         items.append({
             "id": pos.id,
             "symbol": pos.symbol,
+            "price": round(stock_price, 2) if stock_price is not None else None,
             "option_type": pos.option_type,
             "strike": pos.strike,
             "expiration": exp_display,

@@ -191,8 +191,65 @@ function renderTable() {
         }
 
         tr.append(posCell, qtyCell, marginCell, optCell, thetaCell, actCell);
+        _addRowInteractions(tr, pos);
         tbody.appendChild(tr);
     }
+}
+
+// ---------------------------------------------------------------------------
+// Position tooltip (hover on desktop, long-press on mobile)
+// ---------------------------------------------------------------------------
+
+let _lpTimer    = null;   // long-press timer handle
+let _hoverTimer = null;   // hover delay timer handle
+
+function showTooltip(pos, clientX, clientY) {
+    const tip = document.getElementById('posTooltip');
+    tip.textContent = pos.price != null ? `${pos.symbol} $${pos.price.toFixed(2)}` : `${pos.symbol} —`;
+    tip.style.display = 'block';
+
+    const tw = tip.offsetWidth, th = tip.offsetHeight;
+    const vw = window.innerWidth,  vh = window.innerHeight;
+
+    let x = clientX + 12;
+    if (x + tw > vw - 8) x = clientX - tw - 12;
+
+    let y = clientY - th / 2;
+    if (y + th > vh - 8) y = vh - th - 8;
+    y = Math.max(8, y);
+
+    tip.style.left = `${x}px`;
+    tip.style.top  = `${y}px`;
+}
+
+function hideTooltip() {
+    document.getElementById('posTooltip').style.display = 'none';
+}
+
+function _addRowInteractions(tr, pos) {
+    // Desktop: hover with delay
+    tr.addEventListener('mouseenter', e => {
+        const x = e.clientX, y = e.clientY;
+        _hoverTimer = setTimeout(() => showTooltip(pos, x, y), 500);
+    });
+    tr.addEventListener('mouseleave', () => {
+        if (_hoverTimer) { clearTimeout(_hoverTimer); _hoverTimer = null; }
+        hideTooltip();
+    });
+
+    // Mobile: long-press (~500 ms)
+    tr.addEventListener('touchstart', e => {
+        const t = e.touches[0];
+        _lpTimer = setTimeout(() => { _lpTimer = null; showTooltip(pos, t.clientX, t.clientY); }, 500);
+    }, { passive: true });
+    tr.addEventListener('touchmove', () => {
+        if (_lpTimer) { clearTimeout(_lpTimer); _lpTimer = null; }
+    }, { passive: true });
+    tr.addEventListener('touchend', () => {
+        if (_lpTimer) { clearTimeout(_lpTimer); _lpTimer = null; }
+        // Short delay so a tap-to-dismiss works cleanly
+        setTimeout(hideTooltip, 3000);
+    });
 }
 
 function mkTd(text, cls) {
@@ -205,8 +262,7 @@ function mkTd(text, cls) {
 function mkRowBtn(label, handler) {
     const btn = document.createElement('button');
     btn.textContent = label;
-    btn.className = 'btn btn-sm py-0 px-1';
-    btn.style.fontSize = '11px';
+    btn.className = 'btn btn-sm py-0 px-1 mw-row-btn';
     btn.addEventListener('click', handler);
     return btn;
 }
@@ -254,10 +310,20 @@ async function saveConfig() {
 // CRUD
 // ---------------------------------------------------------------------------
 
+function nextOptionFriday() {
+    const today = new Date();
+    const d = today.getDay(); // 0=Sun … 5=Fri, 6=Sat
+    const days = d === 5 ? 7 : d === 6 ? 6 : 5 - d;
+    const result = new Date(today);
+    result.setDate(today.getDate() + days);
+    return result.toISOString().slice(0, 10);
+}
+
 function openAddModal() {
     _editId = null;
     document.getElementById('positionModalTitle').textContent = 'Add Position';
     document.getElementById('positionForm').reset();
+    document.getElementById('fExpiration').value = nextOptionFriday();
     document.getElementById('fQty').value = '1';
     document.getElementById('fLongStrike').value = '';
     document.getElementById('btnAssigned').classList.add('d-none');

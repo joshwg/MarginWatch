@@ -5,8 +5,8 @@
 .mw-summary { min-width: 105px; }
 .mw-val { min-width: 58px; display: inline-block; text-align: right; }
 
-/* Table scroll container */
-.mw-table-wrap { max-height: 760px; overflow-y: auto; }
+/* Table scroll container — height adapts to viewport */
+.mw-table-wrap { max-height: calc(100dvh - 220px); min-height: 200px; overflow-y: auto; }
 
 /* Sticky header inside scroll */
 #positionsTable thead th { position: sticky; top: 0; z-index: 1; }
@@ -17,6 +17,29 @@
 
 /* Actions column width */
 .mw-actions-col { width: 76px; }
+
+/* Row action buttons */
+.mw-row-btn { font-size: 11px; }
+
+/* ── Responsive breakpoints ───────────────────────────────────────────────── */
+
+/* Cover screen portrait — full width, compact table, larger touch targets */
+@media (max-width: 599px) {
+    .mw-app { max-width: 100%; }
+    #positionsTable { font-size: 0.78rem; }
+    .mw-actions-col { width: 68px; }
+    .mw-row-btn { font-size: 13px; padding: 3px 6px !important; }
+}
+
+/* Inner screen open / tablet — allow wider layout */
+@media (min-width: 768px) {
+    .mw-app { max-width: 820px; }
+}
+
+/* Fold inner screen portrait (984px) and wider */
+@media (min-width: 984px) {
+    .mw-app { max-width: 960px; }
+}
 
 /* Force row background through Bootstrap's table-bg variable */
 #positionsTable tbody tr { --bs-table-bg: transparent; }
@@ -38,3 +61,18 @@
 
 /* Negative available margin */
 .mw-danger { color: #dc3545 !important; font-weight: 700; }
+
+/* Position detail tooltip (hover / long-press) */
+.mw-pos-tooltip {
+    position: fixed;
+    background: rgba(30, 30, 30, 0.92);
+    color: #fff;
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 0.8rem;
+    line-height: 1.7;
+    z-index: 1050;
+    pointer-events: none;
+    white-space: nowrap;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.35);
+}
