@@ -23,7 +23,7 @@ import db
 import repositories.config_repository as cfg_repo
 import repositories.positions_repository as pos_repo
 import services.position_service as ps
-import ui.styles as styles
+import ui_styles as styles
 import utils
 from models import Position
 from services.cache_service import CacheService

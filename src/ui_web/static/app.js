@@ -153,7 +153,7 @@ function renderTable() {
 
     for (const [i, pos] of items.entries()) {
         const tr = document.createElement('tr');
-        if ((i + 1) % 5 === 0) tr.classList.add('mw-row-rule');
+        if ((i + 1) % ROW_RULE_INTERVAL === 0) tr.classList.add('mw-row-rule');
         tr.style.backgroundColor = pos.bg;
         tr.style.color = pos.fg;
 
@@ -164,13 +164,13 @@ function renderTable() {
             dot.className = 'mw-ind';
             // Covered call ITM = good (stock rose past strike, profitable assignment)
             // Put/call ITM = bad (short option losing, potential assignment at a loss)
-            dot.style.backgroundColor = pos.is_stock_row ? '#16a34a' : '#dc2626';
+            dot.style.backgroundColor = pos.is_stock_row ? COLOR_ITM_GOOD : COLOR_ITM_BAD;
             posCell.appendChild(dot);
         }
         if (pos.is_profitable) {
             const arrow = document.createElement('span');
             arrow.className = 'mw-profit-arrow';
-            arrow.textContent = '⬆';
+            arrow.textContent = ICON_PROFIT;
             posCell.appendChild(arrow);
         }
         const nameSpan = document.createElement('span');
@@ -192,13 +192,13 @@ function renderTable() {
         const actCell = document.createElement('td');
         actCell.className = 'text-center';
 
-        const editBtn = mkRowBtn('✎', () => editPosition(pos.id));
-        const delBtn  = mkRowBtn('✕', () => deletePosition(pos.id));
+        const editBtn = mkRowBtn(ICON_EDIT,   () => editPosition(pos.id));
+        const delBtn  = mkRowBtn(ICON_DELETE, () => deletePosition(pos.id));
         actCell.append(editBtn, delBtn);
 
         if (pos.show_merge) {
             const [sym, exp, strike] = pos.merge_key;
-            const mergeBtn = mkRowBtn('⊕', () => mergePositions(sym, exp, strike));
+            const mergeBtn = mkRowBtn(ICON_MERGE, () => mergePositions(sym, exp, strike));
             actCell.appendChild(mergeBtn);
         }
 
@@ -223,12 +223,12 @@ function showTooltip(pos, clientX, clientY) {
     const tw = tip.offsetWidth, th = tip.offsetHeight;
     const vw = window.innerWidth,  vh = window.innerHeight;
 
-    let x = clientX + 12;
-    if (x + tw > vw - 8) x = clientX - tw - 12;
+    let x = clientX + TOOLTIP_OFFSET_X;
+    if (x + tw > vw - TOOLTIP_EDGE_GAP) x = clientX - tw - TOOLTIP_OFFSET_X;
 
     let y = clientY - th / 2;
-    if (y + th > vh - 8) y = vh - th - 8;
-    y = Math.max(8, y);
+    if (y + th > vh - TOOLTIP_EDGE_GAP) y = vh - th - TOOLTIP_EDGE_GAP;
+    y = Math.max(TOOLTIP_EDGE_GAP, y);
 
     tip.style.left = `${x}px`;
     tip.style.top  = `${y}px`;
@@ -242,7 +242,7 @@ function _addRowInteractions(tr, pos) {
     // Desktop: hover with delay
     tr.addEventListener('mouseenter', e => {
         const x = e.clientX, y = e.clientY;
-        _hoverTimer = setTimeout(() => showTooltip(pos, x, y), 500);
+        _hoverTimer = setTimeout(() => showTooltip(pos, x, y), HOVER_DELAY_MS);
     });
     tr.addEventListener('mouseleave', () => {
         if (_hoverTimer) { clearTimeout(_hoverTimer); _hoverTimer = null; }
@@ -252,7 +252,7 @@ function _addRowInteractions(tr, pos) {
     // Mobile: long-press (~500 ms)
     tr.addEventListener('touchstart', e => {
         const t = e.touches[0];
-        _lpTimer = setTimeout(() => { _lpTimer = null; showTooltip(pos, t.clientX, t.clientY); }, 500);
+        _lpTimer = setTimeout(() => { _lpTimer = null; showTooltip(pos, t.clientX, t.clientY); }, LONGPRESS_DELAY_MS);
     }, { passive: true });
     tr.addEventListener('touchmove', () => {
         if (_lpTimer) { clearTimeout(_lpTimer); _lpTimer = null; }
@@ -260,7 +260,7 @@ function _addRowInteractions(tr, pos) {
     tr.addEventListener('touchend', () => {
         if (_lpTimer) { clearTimeout(_lpTimer); _lpTimer = null; }
         // Short delay so a tap-to-dismiss works cleanly
-        setTimeout(hideTooltip, 3000);
+        setTimeout(hideTooltip, TOOLTIP_DISMISS_MS);
     });
 }
 
@@ -314,7 +314,7 @@ async function saveConfig() {
         loadPositions();
         const msg = document.getElementById('cfgSavedMsg');
         msg.style.display = 'inline';
-        setTimeout(() => { msg.style.display = 'none'; }, 3000);
+        setTimeout(() => { msg.style.display = 'none'; }, SAVED_MSG_DISMISS_MS);
     }
 }
 
@@ -342,7 +342,7 @@ function openAddModal() {
     document.getElementById('btnClearCover').classList.add('d-none');
     updateFormFields();
     _posModal.show();
-    setTimeout(() => document.getElementById('fSymbol').focus(), 300);
+    setTimeout(() => document.getElementById('fSymbol').focus(), MODAL_FOCUS_DELAY_MS);
 }
 
 async function editPosition(id) {

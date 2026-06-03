@@ -37,6 +37,15 @@ venv/bin/python src/main_web.py
 
 Then open `http://localhost:5000` in a browser. `MARGIN_PWD` is required — the server refuses to start without it.
 
+### Tests
+
+```bash
+export PYTHONPATH=src:../option_lib
+venv/bin/python tests/test_theta.py
+```
+
+Tests live in `tests/` and are excluded from `pack.sh` deployment bundles.
+
 ## Project Structure
 
 ```
@@ -46,11 +55,14 @@ src/
   db.py              SQLite schema, migrations, connection helper
   models.py          Position dataclass
   constants.py       shared constants
+  ui_styles.py       shared colour/style helpers (used by both UIs)
   utils.py           misc helpers
   repositories/      database access layer
   services/          business logic (positions, market data, cache, export)
-  ui/                Tkinter widgets
+  ui/                Tkinter widgets (desktop only)
   ui_web/            Flask templates and static assets
+tests/
+  test_theta.py      smoke-test for option theta fetching
 data/
   marginwatch.db     SQLite database (created on first run)
 ```

@@ -9,7 +9,7 @@ import constants
 from models import Position
 from services.cache_service import CacheService
 import services.position_service as ps
-import ui.styles as styles
+import ui_styles as styles
 from ui.tooltip import Tooltip
 
 

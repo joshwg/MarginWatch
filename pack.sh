@@ -12,6 +12,7 @@ tar -czf "$OUT" \
     --exclude='__pycache__' \
     --exclude='*.pyc' \
     --exclude='*.pyo' \
+    --exclude='*/tests' \
     -C "$(dirname "$SCRIPT_DIR")" \
     "$(basename "$SCRIPT_DIR")" \
     option_lib
