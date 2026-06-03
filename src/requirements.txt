@@ -1,5 +1,5 @@
-flask
-gunicorn
-yfinance
+flask>=3.0.0
+gunicorn>=22.0.0
+yfinance>=0.2.28
 tkcalendar
 openpyxl

@@ -16,7 +16,7 @@ import os
 from datetime import datetime, timedelta
 
 from flask import (Flask, Response, jsonify, redirect, render_template,
-                   request, session, url_for)
+                   request, session, send_from_directory, url_for)
 
 import constants
 import db
@@ -140,7 +140,7 @@ def _touch_session() -> None:
 
 @app.before_request
 def check_auth():
-    if request.endpoint in ("login", "static", "api_price", "api_optprice"):
+    if request.endpoint in ("login", "static", "favicon", "api_price", "api_optprice"):
         return
     if not _is_authenticated():
         if request.path.startswith("/api/") or request.path == "/export/csv":
@@ -170,6 +170,17 @@ def login():
 def logout():
     session.clear()
     return redirect(url_for("login"))
+
+
+# ---------------------------------------------------------------------------
+# Favicon
+# ---------------------------------------------------------------------------
+
+@app.route("/favicon.ico")
+def favicon():
+    assert app.static_folder is not None
+    return send_from_directory(app.static_folder, "favicon.ico",
+                               mimetype="image/vnd.microsoft.icon")
 
 
 # ---------------------------------------------------------------------------

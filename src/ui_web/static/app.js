@@ -44,6 +44,15 @@ document.addEventListener('DOMContentLoaded', async () => {
         this.setSelectionRange(pos, pos);
     });
 
+    document.getElementById('fExpiration').addEventListener('keydown', function (e) {
+        if (e.key !== '-' && e.key !== '=') return;
+        e.preventDefault();
+        const d = new Date(this.value + 'T00:00:00');
+        if (isNaN(d)) return;
+        d.setDate(d.getDate() + (e.key === '=' ? 1 : -1));
+        this.value = d.toISOString().slice(0, 10);
+    });
+
     document.getElementById('confirmModal').addEventListener('hide.bs.modal', () => {
         if (document.activeElement?.closest('#confirmModal')) document.activeElement.blur();
     });
@@ -142,8 +151,9 @@ function renderTable() {
         return;
     }
 
-    for (const pos of items) {
+    for (const [i, pos] of items.entries()) {
         const tr = document.createElement('tr');
+        if ((i + 1) % 5 === 0) tr.classList.add('mw-row-rule');
         tr.style.backgroundColor = pos.bg;
         tr.style.color = pos.fg;
 
@@ -152,14 +162,16 @@ function renderTable() {
         if (pos.itm) {
             const dot = document.createElement('span');
             dot.className = 'mw-ind';
-            dot.style.backgroundColor = '#8A2BE2';
+            // Covered call ITM = good (stock rose past strike, profitable assignment)
+            // Put/call ITM = bad (short option losing, potential assignment at a loss)
+            dot.style.backgroundColor = pos.is_stock_row ? '#16a34a' : '#dc2626';
             posCell.appendChild(dot);
         }
         if (pos.is_profitable) {
-            const dot = document.createElement('span');
-            dot.className = 'mw-ind';
-            dot.style.backgroundColor = '#d6109b';
-            posCell.appendChild(dot);
+            const arrow = document.createElement('span');
+            arrow.className = 'mw-profit-arrow';
+            arrow.textContent = '⬆';
+            posCell.appendChild(arrow);
         }
         const nameSpan = document.createElement('span');
         nameSpan.textContent = pos.abbrev;
