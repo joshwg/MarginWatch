@@ -28,3 +28,13 @@ def fetch_option_theta(symbol: str, expiration_iso: str,
         return _fn(symbol, expiration_iso, strike, option_type)
     except Exception:
         return None
+
+
+def fetch_option_delta(symbol: str, expiration_iso: str,
+                       strike: float, option_type: str) -> float | None:
+    """Return probability of assignment (0–1) for the given contract, or None."""
+    try:
+        from option_lib.yahoo_data import fetch_option_delta as _fn
+        return _fn(symbol, expiration_iso, strike, option_type)
+    except Exception:
+        return None

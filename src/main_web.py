@@ -76,6 +76,8 @@ def _compute_display(pos: Position, cache: CacheService) -> dict:
         opt_str = f"{opt_price:.2f}" if opt_price is not None else "—"
         td = ps.theta_dollars(pos, theta)
 
+    delta = cache.delta(key) if pos.strike else None
+
     days = ps.days_to_expiry(pos)
     bg = styles.expiry_color(days)
     return {
@@ -91,6 +93,7 @@ def _compute_display(pos: Position, cache: CacheService) -> dict:
         "theta_str": f"${round(td):,d}" if td is not None else "—",
         "is_stock_row": ps.is_stock(pos),
         "is_profitable": ps.is_profitable(pos, price),
+        "delta": round(delta, 3) if delta is not None else None,
     }
 
 

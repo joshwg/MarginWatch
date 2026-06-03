@@ -48,3 +48,37 @@ const ICON_EDIT   = '✎';   // row edit button
 const ICON_DELETE = '✕';   // row delete button
 const ICON_MERGE  = '⊕';   // row merge button
 const ICON_PROFIT = '⬆';   // profitable-position indicator
+
+// ── Risk / probability-of-assignment spectrum ─────────────────────────────────
+//
+// Each band covers [threshold, previous_threshold).  The array is ordered from
+// highest risk to lowest so the first matching entry wins.
+//
+//  Color    Delta range   Market state
+//  Red      85–100 %      Deep ITM  — assignment almost certain
+//  Orange   65– 84 %      Mod ITM   — high risk, active defence needed
+//  Yellow   45– 64 %      ATM       — coin-flip danger zone
+//  Purple   25– 44 %      Slight OTM — getting uncomfortably close
+//  Blue     10– 24 %      OTM       — comfortable theta-burn zone
+//  Green     0–  9 %      Deep OTM  — practically zero assignment risk
+
+const RISK_BANDS = [
+    { threshold: 0.85, color: '#dc2626', label: 'Deep ITM'   },  // 🔴 Red
+    { threshold: 0.65, color: '#ea580c', label: 'Mod ITM'    },  // 🟠 Orange
+    { threshold: 0.45, color: '#ca8a04', label: 'ATM'        },  // 🟡 Yellow
+    { threshold: 0.25, color: '#7c3aed', label: 'Slight OTM' },  // 🟣 Purple
+    { threshold: 0.10, color: '#2563eb', label: 'OTM'        },  // 🔵 Blue
+    { threshold: 0.00, color: '#16a34a', label: 'Deep OTM'   },  // 🟢 Green
+];
+
+/**
+ * Return the risk band colour for a given delta probability (0–1),
+ * or null when no delta is available (STOCK without a covered call, etc.).
+ */
+function riskColor(delta) {
+    if (delta == null) return null;
+    for (const band of RISK_BANDS) {
+        if (delta >= band.threshold) return band.color;
+    }
+    return RISK_BANDS[RISK_BANDS.length - 1].color;
+}

@@ -148,4 +148,10 @@ These endpoints bypass login so they can be tested with a plain browser or `curl
 
 ## Maintenance
 
-Expired `CALL`, `PUT`, `CALL_SPREAD`, and `PUT_SPREAD` positions are automatically deleted on the Monday after expiration.
+Cleanup runs on every positions fetch (`get_open_positions`), so it fires on every page load:
+
+| Position type | Action |
+|---|---|
+| `CALL`, `PUT`, `CALL_SPREAD`, `PUT_SPREAD` | Deleted the morning after expiration |
+| `STOCK` with an expired covered call | Covered-call fields (`strike`, `expiration`) cleared — the row reverts to an uncovered stock position |
+| `STOCK` with no covered call | Never auto-removed (shares don't expire) |

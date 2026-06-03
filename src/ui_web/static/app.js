@@ -159,6 +159,17 @@ function renderTable() {
 
         // Position cell: optional indicator swatches + name
         const posCell = document.createElement('td');
+
+        // Risk indicator: coloured ball showing probability of assignment
+        const rc = riskColor(pos.delta);
+        if (rc !== null) {
+            const risk = document.createElement('span');
+            risk.className = 'mw-ind';
+            risk.style.backgroundColor = rc;
+            risk.title = `δ ${(pos.delta * 100).toFixed(0)}%`;
+            posCell.appendChild(risk);
+        }
+
         if (pos.itm) {
             const dot = document.createElement('span');
             dot.className = 'mw-ind';

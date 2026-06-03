@@ -9,7 +9,12 @@ from models import Position
 
 
 def _cleanup_expired(conn) -> None:
-    """Delete any CALL/PUT/spread rows whose expiration date has passed."""
+    """Clean up positions whose expiration date has passed.
+
+    - CALL / PUT / spreads: deleted outright (the contract is gone).
+    - STOCK with a covered call: the call expired, but you still own the shares.
+      Reset strike and expiration to NULL so the row becomes an uncovered stock.
+    """
     today = date.today().isoformat()
     conn.execute(
         "DELETE FROM positions"
@@ -17,11 +22,16 @@ def _cleanup_expired(conn) -> None:
         " AND expiration < ?",
         (today,),
     )
+    conn.execute(
+        "UPDATE positions SET strike=NULL, expiration=NULL"
+        " WHERE option_type='STOCK' AND strike > 0 AND expiration < ?",
+        (today,),
+    )
     conn.commit()
 
 
 def get_open_positions() -> list[Position]:
-    """Run expiry cleanup then return all OPEN positions."""
+    """Run expiry cleanup then return all positions."""
     with db.get_connection() as conn:
         _cleanup_expired(conn)
         rows = conn.execute("SELECT * FROM positions").fetchall()

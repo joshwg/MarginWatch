@@ -24,6 +24,7 @@ class CacheService:
         self._price_ts: dict[str, float] = {}
         self._opt_price: dict[tuple, float | None] = {}
         self._theta: dict[tuple, float | None] = {}
+        self._delta: dict[tuple, float | None] = {}
 
     # ------------------------------------------------------------------
     # Public interface
@@ -35,12 +36,14 @@ class CacheService:
         self._price_ts.pop(symbol, None)
         self._opt_price = {k: v for k, v in self._opt_price.items() if k[0] != symbol}
         self._theta     = {k: v for k, v in self._theta.items()     if k[0] != symbol}
+        self._delta     = {k: v for k, v in self._delta.items()     if k[0] != symbol}
 
     def fetch_all(self, positions: list[Position]) -> None:
         """Fetch any missing prices and greeks for all positions."""
         self._fetch_prices(positions)
         self._fetch_opt_prices(positions)
         self._fetch_theta(positions)
+        self._fetch_delta(positions)
 
     def fetch_price(self, symbol: str) -> float | None:
         """Return the stock price, re-fetching from the network if the cache is expired."""
@@ -58,6 +61,9 @@ class CacheService:
 
     def theta(self, key: tuple) -> float | None:
         return self._theta.get(key)
+
+    def delta(self, key: tuple) -> float | None:
+        return self._delta.get(key)
 
     # ------------------------------------------------------------------
     # Private fetchers
@@ -96,3 +102,13 @@ class CacheService:
                 if long_key not in self._theta:
                     self._theta[long_key] = mds.fetch_option_theta(
                         pos.symbol, pos.expiration, pos.long_strike, ot)
+
+    def _fetch_delta(self, positions: list[Position]) -> None:
+        for pos in positions:
+            if ps.is_stock(pos) and not pos.strike:
+                continue
+            ot = ps.pricing_option_type(pos)
+            key = (pos.symbol, pos.expiration, pos.strike, ot)
+            if key not in self._delta:
+                self._delta[key] = mds.fetch_option_delta(
+                    pos.symbol, pos.expiration, pos.strike, ot)
