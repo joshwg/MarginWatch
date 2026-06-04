@@ -71,6 +71,11 @@
 .mw-legend { display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; align-items: center; }
 .mw-legend-item { display: flex; align-items: center; gap: 4px; font-size: 0.78rem; }
 .mw-legend-item .mw-ind { margin-right: 0; }
+.mw-legend-prefix { font-size: 0.78rem; font-style: italic; color: #666; white-space: nowrap; }
+
+@media (max-width: 575px) {
+  .mw-legend { flex-direction: column; align-items: flex-start; gap: 0.35rem; }
+}
 
 /* Stock row: underlined position name */
 .mw-stock-pos { text-decoration: underline; }

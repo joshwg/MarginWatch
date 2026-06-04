@@ -13,6 +13,10 @@ tar -czf "$OUT" \
     --exclude='*.pyc' \
     --exclude='*.pyo' \
     --exclude='*/tests' \
+    --exclude='.pytest_cache' \
+    --exclude='*/.pytest_cache' \
+    --exclude='MarginWatch/src/ui' \
+    --exclude='MarginWatch/src/main.py' \
     -C "$(dirname "$SCRIPT_DIR")" \
     "$(basename "$SCRIPT_DIR")" \
     option_lib

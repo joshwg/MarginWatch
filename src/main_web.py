@@ -205,10 +205,17 @@ def index():
 # Positions API
 # ---------------------------------------------------------------------------
 
+def _effective_expiration(r) -> str:
+    """Sort key for expiration: plain stock (no cover) always sorts last."""
+    if ps.is_stock(r) and not r.strike:
+        return constants.NO_EXPIRATION
+    return r.expiration or constants.NO_EXPIRATION
+
+
 def _sorted_positions(sort: str) -> list:
     rows = pos_repo.get_open_positions()
     if sort == "alpha":
-        return sorted(rows, key=lambda r: (r.symbol, r.expiration or "", r.strike or 0.0))
+        return sorted(rows, key=lambda r: (r.symbol, _effective_expiration(r), r.strike or 0.0))
     if sort == "type":
         def _type_key(r):
             if r.option_type == "CALL" or (r.option_type == "STOCK" and r.strike):
@@ -217,9 +224,9 @@ def _sorted_positions(sort: str) -> list:
                 t = 1
             else:
                 t = 2
-            return (t, r.symbol, r.expiration or "", r.strike or 0.0)
+            return (t, r.symbol, _effective_expiration(r), r.strike or 0.0)
         return sorted(rows, key=_type_key)
-    return sorted(rows, key=lambda r: (r.expiration or "", r.symbol, r.strike or 0.0))
+    return sorted(rows, key=lambda r: (_effective_expiration(r), r.symbol, r.strike or 0.0))
 
 
 @app.route("/api/positions")

@@ -178,7 +178,7 @@ function renderTable() {
             // Covered call ITM = good (stock rose past strike, profitable assignment)
             // Put/call ITM = bad (short option losing, potential assignment at a loss)
             dot.style.backgroundColor = pos.is_stock_row ? COLOR_ITM_GOOD : COLOR_ITM_BAD;
-            dot.textContent = 'I';
+            dot.textContent = 'i';
             posCell.appendChild(dot);
         }
         if (pos.is_profitable) {
@@ -471,6 +471,10 @@ function applyClearCover() {
 function buildLegend() {
     const container = document.getElementById('riskLegendItems');
     if (!container) return;
+    const prefix = document.createElement('span');
+    prefix.className = 'mw-legend-prefix';
+    prefix.textContent = 'Chance of assignment:';
+    container.appendChild(prefix);
     RISK_BANDS.forEach((band, i) => {
         // Compute delta range label from adjacent thresholds
         let range;
