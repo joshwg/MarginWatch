@@ -14,6 +14,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     _posModal     = new bootstrap.Modal(document.getElementById('positionModal'));
     _confirmModal = new bootstrap.Modal(document.getElementById('confirmModal'));
 
+    buildLegend();
     await loadConfig();
     loadPositions();
 
@@ -87,6 +88,7 @@ async function loadPositions() {
         _positions = data.positions;
         updateSummary(data.summary);
     } catch (e) {
+        console.error('[MarginWatch] loadPositions failed:', e);
         _positions = [];
     }
     renderTable();
@@ -172,10 +174,11 @@ function renderTable() {
 
         if (pos.itm) {
             const dot = document.createElement('span');
-            dot.className = 'mw-ind';
+            dot.className = 'mw-ind mw-ind-itm';
             // Covered call ITM = good (stock rose past strike, profitable assignment)
             // Put/call ITM = bad (short option losing, potential assignment at a loss)
             dot.style.backgroundColor = pos.is_stock_row ? COLOR_ITM_GOOD : COLOR_ITM_BAD;
+            dot.textContent = 'I';
             posCell.appendChild(dot);
         }
         if (pos.is_profitable) {
@@ -459,6 +462,38 @@ function applyClearCover() {
     document.getElementById('fStrike').value     = '';
     document.getElementById('fExpiration').value = '';
     document.getElementById('btnClearCover').classList.add('d-none');
+}
+
+// ---------------------------------------------------------------------------
+// Risk legend
+// ---------------------------------------------------------------------------
+
+function buildLegend() {
+    const container = document.getElementById('riskLegendItems');
+    if (!container) return;
+    RISK_BANDS.forEach((band, i) => {
+        // Compute delta range label from adjacent thresholds
+        let range;
+        if (i === 0) {
+            range = `≥${(band.threshold * 100).toFixed(0)}%`;
+        } else if (i === RISK_BANDS.length - 1) {
+            range = `<${(RISK_BANDS[i - 1].threshold * 100).toFixed(0)}%`;
+        } else {
+            range = `${(band.threshold * 100).toFixed(0)}–${(RISK_BANDS[i - 1].threshold * 100).toFixed(0)}%`;
+        }
+        const item = document.createElement('span');
+        item.className = 'mw-legend-item';
+
+        const ball = document.createElement('span');
+        ball.className = 'mw-ind';
+        ball.style.backgroundColor = band.color;
+
+        const label = document.createElement('span');
+        label.textContent = `${band.label} (${range})`;
+
+        item.append(ball, label);
+        container.appendChild(item);
+    });
 }
 
 // ---------------------------------------------------------------------------

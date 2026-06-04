@@ -46,10 +46,15 @@ class CacheService:
         self._fetch_delta(positions)
 
     def fetch_price(self, symbol: str) -> float | None:
-        """Return the stock price, re-fetching from the network if the cache is expired."""
+        """Return the stock price, re-fetching from the network if the cache is expired.
+
+        A None result (fetch failed) is not cached so the next call retries immediately.
+        """
         if time.monotonic() - self._price_ts.get(symbol, 0.0) > _PRICE_TTL:
-            self._price[symbol] = mds.fetch_last_price(symbol)
-            self._price_ts[symbol] = time.monotonic()
+            price = mds.fetch_last_price(symbol)
+            if price is not None:
+                self._price[symbol] = price
+                self._price_ts[symbol] = time.monotonic()
         return self._price.get(symbol)
 
     def price(self, symbol: str) -> float | None:

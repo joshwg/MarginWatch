@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import date
 
+import constants
 import db
 from models import Position
 
@@ -23,7 +24,7 @@ def _cleanup_expired(conn) -> None:
         (today,),
     )
     conn.execute(
-        "UPDATE positions SET strike=NULL, expiration=NULL"
+        f"UPDATE positions SET strike=0, expiration='{constants.NO_EXPIRATION}'"
         " WHERE option_type='STOCK' AND strike > 0 AND expiration < ?",
         (today,),
     )

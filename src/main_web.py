@@ -12,8 +12,14 @@ import csv
 import dataclasses
 import hashlib
 import io
+import logging
 import os
 from datetime import datetime, timedelta
+
+logging.basicConfig(
+    level=logging.WARNING,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
 
 from flask import (Flask, Response, jsonify, redirect, render_template,
                    request, session, send_from_directory, url_for)
@@ -271,6 +277,7 @@ def api_positions():
             "theta_dollars": display["theta_dollars"],
             "is_stock_row": display["is_stock_row"],
             "is_profitable": display["is_profitable"],
+            "delta": display["delta"],
             "show_merge": show_merge,
             "merge_key": list(merge_key),
         })
@@ -516,4 +523,4 @@ def _build_csv_rows(positions: list) -> list[list]:
 
 
 if __name__ == "__main__":
-    app.run(debug=True, port=constants.WEB_PORT)
+    app.run(debug=True, host='0.0.0.0', port=constants.WEB_PORT)
