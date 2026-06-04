@@ -16,17 +16,19 @@ _CREATE_POSITIONS = """
         -- PUT         : naked put
         -- STOCK       : long stock; strike=0 means no cover written,
         --               strike>0 means a covered call at that strike/expiration
-        -- CALL_SPREAD : vertical call spread; strike=short leg, long_strike=long leg
-        -- PUT_SPREAD  : vertical put spread; strike=short leg, long_strike=long leg
+        -- CALL_SPREAD : vertical call spread; strike=short leg, strike2=long leg
+        -- PUT_SPREAD  : vertical put spread; strike=short leg, strike2=long leg
+        -- STRADDLE    : short straddle/strangle; strike=call strike, strike2=put strike
+        --               (if strike2=0 the put strike equals the call strike)
         symbol      TEXT    NOT NULL,
-        option_type TEXT    NOT NULL CHECK(option_type IN ('CALL', 'PUT', 'STOCK', 'CALL_SPREAD', 'PUT_SPREAD')),
+        option_type TEXT    NOT NULL CHECK(option_type IN ('CALL', 'PUT', 'STOCK', 'CALL_SPREAD', 'PUT_SPREAD', 'STRADDLE')),
         strike      REAL    NOT NULL DEFAULT 0,
         expiration  TEXT    NOT NULL DEFAULT '9999-12-31',
         quantity    INTEGER NOT NULL DEFAULT 0,   -- short contracts (CALL/PUT) or lots/100 (STOCK)
         open_date   TEXT    NOT NULL,
         long_shares  INTEGER,   -- actual share count for STOCK rows
         long_cost    REAL,      -- per-share cost basis for STOCK rows
-        long_strike  REAL       -- set for vertical spreads: the protective long leg's strike
+        strike2      REAL       -- spread: protective long leg strike; straddle: put strike
     )
 """
 
@@ -48,16 +50,14 @@ def _migrate_positions(conn: sqlite3.Connection) -> None:
 
     schema_sql = schema_row[0]
 
-    # If the existing schema is missing STOCK or new columns, recreate it
-    needs_recreate = "'STOCK'" not in schema_sql or "'CALL_SPREAD'" not in schema_sql
-
-    if needs_recreate:
+    # Very old schema missing STOCK/CALL_SPREAD: drop and recreate (pre-deployment data)
+    if "'STOCK'" not in schema_sql or "'CALL_SPREAD'" not in schema_sql:
         conn.execute("DROP TABLE positions")
         return
 
-    # Add any missing optional columns
+    # Add any missing optional columns (new installs with old schema)
     existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(positions)")}
-    for col, defn in [("long_shares", "INTEGER"), ("long_cost", "REAL"), ("long_strike", "REAL")]:
+    for col, defn in [("long_shares", "INTEGER"), ("long_cost", "REAL"), ("strike2", "REAL")]:
         if col not in existing_cols:
             conn.execute(f"ALTER TABLE positions ADD COLUMN {col} {defn}")
 

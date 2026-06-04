@@ -22,7 +22,7 @@ def compute_display(pos: Position, cache: CacheService) -> dict:
     theta = cache.theta(key) if pos.strike else None
 
     if ps.is_spread(pos):
-        long_key = (pos.symbol, pos.expiration, pos.long_strike, ot)
+        long_key = (pos.symbol, pos.expiration, pos.strike2, ot)
         long_opt = cache.opt_price(long_key)
         long_theta = cache.theta(long_key)
         net_opt = (opt_price - long_opt) if (opt_price is not None and long_opt is not None) else None

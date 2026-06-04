@@ -16,11 +16,19 @@ class Position:
     open_date: str
     long_shares: int | None
     long_cost: float | None
-    long_strike: float | None = None  # set for vertical spreads; None means not a spread
+    strike2: float | None = None  # spread: protective leg; straddle: put strike (0 = same as call)
 
     @classmethod
     def from_row(cls, row) -> Position:
         """Construct from a sqlite3.Row (or any mapping)."""
+        keys = row.keys()
+        # Support both old column name (pre-migration) and new name
+        if "strike2" in keys:
+            s2 = row["strike2"]
+        elif "long_strike" in keys:
+            s2 = row["long_strike"]
+        else:
+            s2 = None
         return cls(
             id=row["id"],
             symbol=row["symbol"],
@@ -31,5 +39,5 @@ class Position:
             open_date=row["open_date"],
             long_shares=row["long_shares"],
             long_cost=row["long_cost"],
-            long_strike=row["long_strike"] if "long_strike" in row.keys() else None,
+            strike2=s2,
         )

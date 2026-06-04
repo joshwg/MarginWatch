@@ -48,10 +48,37 @@ def build_workbook(positions: list[Position], cache: CacheService) -> tuple:
                 ws.append([stock_label, stock_margin, pos.long_shares or 0, 0, 0, ""])
                 excel_row += 1
                 row_count += 1
+        elif ps.is_straddle(pos):
+            put_strike = pos.strike2
+            call_key = (pos.symbol, pos.expiration, pos.strike,  'CALL')
+            put_key  = (pos.symbol, pos.expiration, put_strike,  'PUT')
+            call_theta = cache.theta(call_key)
+            put_theta  = cache.theta(put_key)
+            call_abbrev, put_abbrev = ps.straddle_leg_abbrevs(pos)
+            ws.append([
+                call_abbrev,
+                round(ps.margin_k(pos), 2),
+                pos.quantity,
+                f"=-F{excel_row}*C{excel_row}*100" if call_theta is not None else "",
+                pos.expiration or "",
+                round(call_theta, 4) if call_theta is not None else "",
+            ])
+            excel_row += 1
+            row_count += 1
+            ws.append([
+                put_abbrev,
+                0,
+                pos.quantity,
+                f"=-F{excel_row}*C{excel_row}*100" if put_theta is not None else "",
+                pos.expiration or "",
+                round(put_theta, 4) if put_theta is not None else "",
+            ])
+            excel_row += 1
+            row_count += 1
         elif ps.is_spread(pos):
             ot = ps.pricing_option_type(pos)
             short_key = (pos.symbol, pos.expiration, pos.strike, ot)
-            long_key  = (pos.symbol, pos.expiration, pos.long_strike, ot)
+            long_key  = (pos.symbol, pos.expiration, pos.strike2, ot)
             short_theta = cache.theta(short_key)
             long_theta  = cache.theta(long_key)
             short_abbrev, long_abbrev = ps.spread_leg_abbrevs(pos)

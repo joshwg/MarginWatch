@@ -82,20 +82,36 @@ class CacheService:
         for pos in positions:
             if not pos.strike:
                 continue
+            if ps.is_straddle(pos):
+                put_strike = pos.strike2
+                for s, ot in [(pos.strike, 'CALL'), (put_strike, 'PUT')]:
+                    k = (pos.symbol, pos.expiration, s, ot)
+                    if k not in self._opt_price:
+                        self._opt_price[k] = mds.fetch_option_theoretical_price(
+                            pos.symbol, pos.expiration, s, ot)
+                continue
             ot = ps.pricing_option_type(pos)
             key = (pos.symbol, pos.expiration, pos.strike, ot)
             if key not in self._opt_price:
                 self._opt_price[key] = mds.fetch_option_theoretical_price(
                     pos.symbol, pos.expiration, pos.strike, ot)
             if ps.is_spread(pos):
-                long_key = (pos.symbol, pos.expiration, pos.long_strike, ot)
+                long_key = (pos.symbol, pos.expiration, pos.strike2, ot)
                 if long_key not in self._opt_price:
                     self._opt_price[long_key] = mds.fetch_option_theoretical_price(
-                        pos.symbol, pos.expiration, pos.long_strike, ot)
+                        pos.symbol, pos.expiration, pos.strike2, ot)
 
     def _fetch_theta(self, positions: list[Position]) -> None:
         for pos in positions:
             if ps.is_stock(pos) and not pos.strike:
+                continue
+            if ps.is_straddle(pos):
+                put_strike = pos.strike2
+                for s, ot in [(pos.strike, 'CALL'), (put_strike, 'PUT')]:
+                    k = (pos.symbol, pos.expiration, s, ot)
+                    if k not in self._theta:
+                        self._theta[k] = mds.fetch_option_theta(
+                            pos.symbol, pos.expiration, s, ot)
                 continue
             ot = ps.pricing_option_type(pos)
             key = (pos.symbol, pos.expiration, pos.strike, ot)
@@ -103,14 +119,23 @@ class CacheService:
                 self._theta[key] = mds.fetch_option_theta(
                     pos.symbol, pos.expiration, pos.strike, ot)
             if ps.is_spread(pos):
-                long_key = (pos.symbol, pos.expiration, pos.long_strike, ot)
+                long_key = (pos.symbol, pos.expiration, pos.strike2, ot)
                 if long_key not in self._theta:
                     self._theta[long_key] = mds.fetch_option_theta(
-                        pos.symbol, pos.expiration, pos.long_strike, ot)
+                        pos.symbol, pos.expiration, pos.strike2, ot)
 
     def _fetch_delta(self, positions: list[Position]) -> None:
         for pos in positions:
             if ps.is_stock(pos) and not pos.strike:
+                continue
+            if ps.is_straddle(pos):
+                # Fetch both legs; worst-case delta is used as the position risk
+                put_strike = pos.strike2
+                for s, ot in [(pos.strike, 'CALL'), (put_strike, 'PUT')]:
+                    k = (pos.symbol, pos.expiration, s, ot)
+                    if k not in self._delta:
+                        self._delta[k] = mds.fetch_option_delta(
+                            pos.symbol, pos.expiration, s, ot)
                 continue
             ot = ps.pricing_option_type(pos)
             key = (pos.symbol, pos.expiration, pos.strike, ot)

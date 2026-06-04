@@ -90,7 +90,7 @@ class PositionDialog(tk.Toplevel):
         # Long strike (row 5, CALL/PUT spread only)
         self._lstrike_lbl = ttk.Label(self, text="Long Strike:")
         self._lstrike_lbl.grid(row=5, column=0, sticky=tk.W, padx=px, pady=py)
-        raw_ls = r.get("long_strike")
+        raw_ls = r.get("strike2")
         self._lstrike = tk.StringVar(value=str(raw_ls) if raw_ls else "")
         self._lstrike.trace_add("write", lambda *_: self._validate())
         self._lstrike_entry = ttk.Entry(self, textvariable=self._lstrike, width=12)
@@ -305,7 +305,7 @@ class PositionDialog(tk.Toplevel):
             "quantity": 0,
             "long_shares": qty * 100,
             "long_cost": strike,
-            "long_strike": None,
+            "strike2": None,
         }
         self.destroy()
 
@@ -331,7 +331,7 @@ class PositionDialog(tk.Toplevel):
             "quantity": 0,
             "long_shares": long_shares,
             "long_cost": long_cost,
-            "long_strike": None,
+            "strike2": None,
         }
         self.destroy()
 
@@ -354,7 +354,10 @@ class PositionDialog(tk.Toplevel):
             long_cost = utils.parse_float(lc, None)
 
         ls_str = self._lstrike.get().strip()
-        long_strike = utils.parse_float(ls_str, None) if ls_str else None
+        strike2 = utils.parse_float(ls_str, None) if ls_str else None
+        # Straddle: put strike defaults to call strike if not specified
+        if ot == "STRADDLE" and not strike2:
+            strike2 = strike
 
         self.result = {
             "symbol": sym,
@@ -364,6 +367,6 @@ class PositionDialog(tk.Toplevel):
             "quantity": qty,
             "long_shares": long_shares,
             "long_cost": long_cost,
-            "long_strike": long_strike,
+            "strike2": strike2,
         }
         self.destroy()

@@ -19,7 +19,7 @@ def _cleanup_expired(conn) -> None:
     today = date.today().isoformat()
     conn.execute(
         "DELETE FROM positions"
-        " WHERE option_type IN ('CALL','PUT','CALL_SPREAD','PUT_SPREAD')"
+        " WHERE option_type IN ('CALL','PUT','CALL_SPREAD','PUT_SPREAD','STRADDLE')"
         " AND expiration < ?",
         (today,),
     )
@@ -55,11 +55,11 @@ def insert_position(d: dict) -> None:
         conn.execute(
             "INSERT INTO positions"
             " (symbol, option_type, strike, expiration, quantity,"
-            "  open_date, long_shares, long_cost, long_strike)"
+            "  open_date, long_shares, long_cost, strike2)"
             " VALUES (?,?,?,?,?,?,?,?,?)",
             (d["symbol"], d["option_type"], d["strike"], d["expiration"],
              d["quantity"], today, d["long_shares"], d["long_cost"],
-             d.get("long_strike")),
+             d.get("strike2")),
         )
         conn.commit()
 
@@ -69,11 +69,11 @@ def update_position(row_id: int, d: dict) -> None:
     with db.get_connection() as conn:
         conn.execute(
             "UPDATE positions SET symbol=?, option_type=?, strike=?,"
-            " expiration=?, quantity=?, long_shares=?, long_cost=?, long_strike=?"
+            " expiration=?, quantity=?, long_shares=?, long_cost=?, strike2=?"
             " WHERE id=?",
             (d["symbol"], d["option_type"], d["strike"], d["expiration"],
              d["quantity"], d["long_shares"], d["long_cost"],
-             d.get("long_strike"), row_id),
+             d.get("strike2"), row_id),
         )
         conn.commit()
 

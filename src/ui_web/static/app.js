@@ -351,7 +351,7 @@ function openAddModal() {
     document.getElementById('positionForm').reset();
     document.getElementById('fExpiration').value = nextOptionFriday();
     document.getElementById('fQty').value = '1';
-    document.getElementById('fLongStrike').value = '';
+    document.getElementById('fStrike2').value = '';
     document.getElementById('btnAssigned').classList.add('d-none');
     document.getElementById('btnClearCover').classList.add('d-none');
     updateFormFields();
@@ -373,7 +373,7 @@ async function editPosition(id) {
     document.getElementById('fQty').value         = pos.quantity || 1;
     document.getElementById('fShares').value      = pos.long_shares || '';
     document.getElementById('fCost').value        = pos.long_cost || '';
-    document.getElementById('fLongStrike').value  = pos.long_strike || '';
+    document.getElementById('fStrike2').value  = pos.strike2 || '';
 
     document.getElementById('btnAssigned')
         .classList.toggle('d-none', pos.option_type !== 'PUT');
@@ -394,7 +394,7 @@ async function savePosition(e) {
         quantity:    parseInt(document.getElementById('fQty').value) || 1,
         long_shares: parseInt(document.getElementById('fShares').value) || null,
         long_cost:   parseFloat(document.getElementById('fCost').value) || null,
-        long_strike: parseFloat(document.getElementById('fLongStrike').value) || null,
+        strike2: parseFloat(document.getElementById('fStrike2').value) || null,
     };
     const url    = _editId ? `/api/positions/${_editId}` : '/api/positions';
     const method = _editId ? 'PUT' : 'POST';
@@ -433,14 +433,19 @@ async function mergePositions(symbol, expiration, strike) {
 
 function updateFormFields() {
     const ot = document.getElementById('fType').value;
-    const isStock  = ot === 'STOCK';
-    const isSpread = ot === 'CALL_SPREAD' || ot === 'PUT_SPREAD';
+    const isStock    = ot === 'STOCK';
+    const isSpread   = ot === 'CALL_SPREAD' || ot === 'PUT_SPREAD';
+    const isStraddle = ot === 'STRADDLE';
+    const showStrike2 = isSpread || isStraddle;
     document.getElementById('rowShares').classList.toggle('d-none', !isStock);
     document.getElementById('rowCost').classList.toggle('d-none', !isStock);
-    document.getElementById('rowLongStrike').classList.toggle('d-none', !isSpread);
-    document.getElementById('strikeLabel').textContent = isSpread ? 'Strike (short)' : 'Strike';
+    document.getElementById('rowStrike2').classList.toggle('d-none', !showStrike2);
+    document.getElementById('strikeLabel').textContent =
+        isSpread ? 'Strike (short)' : isStraddle ? 'Call Strike' : 'Strike';
+    document.getElementById('strike2Label').textContent =
+        isStraddle ? 'Put Strike' : 'Long Strike';
     document.getElementById('qtyLabel').textContent = isStock ? 'Quantity' : 'Contracts';
-    if (!isSpread) document.getElementById('fLongStrike').value = '';
+    if (!showStrike2) document.getElementById('fStrike2').value = '';
 }
 
 function applyAssigned() {

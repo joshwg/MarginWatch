@@ -62,33 +62,61 @@ _cache = CacheService()
 # ---------------------------------------------------------------------------
 
 def _compute_display(pos: Position, cache: CacheService) -> dict:
-    ot = ps.pricing_option_type(pos)
-    key = (pos.symbol, pos.expiration, pos.strike, ot)
     price = cache.price(pos.symbol)
-    opt_price = cache.opt_price(key) if pos.strike else None
-    theta = cache.theta(key) if pos.strike else None
 
-    if ps.is_spread(pos):
-        long_key = (pos.symbol, pos.expiration, pos.long_strike, ot)
-        long_opt = cache.opt_price(long_key)
-        long_theta = cache.theta(long_key)
-        net_opt = (opt_price - long_opt) if (opt_price is not None and long_opt is not None) else None
+    if ps.is_straddle(pos):
+        put_strike = pos.strike2
+        call_key = (pos.symbol, pos.expiration, pos.strike,     'CALL')
+        put_key  = (pos.symbol, pos.expiration, put_strike,     'PUT')
+        call_opt   = cache.opt_price(call_key)
+        put_opt    = cache.opt_price(put_key)
+        call_theta = cache.theta(call_key)
+        put_theta  = cache.theta(put_key)
+        net_opt = (call_opt + put_opt) if (call_opt is not None and put_opt is not None) else None
         opt_str = f"{net_opt:.2f}" if net_opt is not None else "—"
-        td = ps.theta_dollars(pos, theta, long_theta)
-        short_line, long_line = ps.spread_leg_abbrevs(pos)
-        short_line, long_line = (short_line, long_line) if ps.is_credit_spread(pos) else (long_line, short_line)
-    else:
-        long_line = None
-        opt_str = f"{opt_price:.2f}" if opt_price is not None else "—"
-        td = ps.theta_dollars(pos, theta)
+        if call_theta is not None and put_theta is not None:
+            td = (-call_theta - put_theta) * 100 * pos.quantity
+        elif call_theta is not None:
+            td = -call_theta * 100 * pos.quantity
+        elif put_theta is not None:
+            td = -put_theta * 100 * pos.quantity
+        else:
+            td = None
+        abbrev, abbrev2 = ps.straddle_leg_abbrevs(pos)
+        # Worst-case leg drives the risk ball
+        call_delta = cache.delta(call_key)
+        put_delta  = cache.delta(put_key)
+        deltas = [d for d in (call_delta, put_delta) if d is not None]
+        delta = max(deltas) if deltas else None
 
-    delta = cache.delta(key) if pos.strike else None
+    else:
+        ot = ps.pricing_option_type(pos)
+        key = (pos.symbol, pos.expiration, pos.strike, ot)
+        opt_price = cache.opt_price(key) if pos.strike else None
+        theta = cache.theta(key) if pos.strike else None
+
+        if ps.is_spread(pos):
+            long_key = (pos.symbol, pos.expiration, pos.strike2, ot)
+            long_opt = cache.opt_price(long_key)
+            long_theta = cache.theta(long_key)
+            net_opt = (opt_price - long_opt) if (opt_price is not None and long_opt is not None) else None
+            opt_str = f"{net_opt:.2f}" if net_opt is not None else "—"
+            td = ps.theta_dollars(pos, theta, long_theta)
+            short_line, long_line = ps.spread_leg_abbrevs(pos)
+            abbrev, abbrev2 = (short_line, long_line) if ps.is_credit_spread(pos) else (long_line, short_line)
+        else:
+            abbrev2 = None
+            opt_str = f"{opt_price:.2f}" if opt_price is not None else "—"
+            td = ps.theta_dollars(pos, theta)
+            abbrev = ps.position_abbrev(pos)
+
+        delta = cache.delta(key) if pos.strike else None
 
     days = ps.days_to_expiry(pos)
     bg = styles.expiry_color(days)
     return {
-        "abbrev": short_line if ps.is_spread(pos) else ps.position_abbrev(pos),
-        "abbrev2": long_line,
+        "abbrev": abbrev,
+        "abbrev2": abbrev2,
         "qty": ps.display_quantity(pos),
         "margin": ps.margin_k(pos),
         "bg": bg,
@@ -271,7 +299,7 @@ def api_positions():
             "quantity": pos.quantity,
             "long_shares": pos.long_shares,
             "long_cost": pos.long_cost,
-            "long_strike": pos.long_strike,
+            "strike2": pos.strike2,
             "abbrev": display["abbrev"],
             "abbrev2": display["abbrev2"],
             "qty": display["qty"],
@@ -401,7 +429,10 @@ def _normalize_position_data(d: dict) -> None:
     d["quantity"] = int(d.get("quantity") or 1)
     d["long_shares"] = int(d["long_shares"]) if d.get("long_shares") else None
     d["long_cost"] = float(d["long_cost"]) if d.get("long_cost") else None
-    d["long_strike"] = float(d["long_strike"]) if d.get("long_strike") else None
+    d["strike2"] = float(d["strike2"]) if d.get("strike2") else None
+    # Straddle: put strike defaults to call strike (true straddle if not specified)
+    if d.get("option_type") == "STRADDLE" and not d.get("strike2"):
+        d["strike2"] = d["strike"]
     if not d.get("expiration"):
         d["expiration"] = constants.NO_EXPIRATION
 
@@ -488,10 +519,29 @@ def _build_csv_rows(positions: list) -> list[list]:
                 ])
             else:
                 rows.append([stock_label, stock_margin, pos.long_shares or 0, "", "", ""])
+        elif ps.is_straddle(pos):
+            put_strike = pos.strike2
+            call_key = (pos.symbol, pos.expiration, pos.strike,  'CALL')
+            put_key  = (pos.symbol, pos.expiration, put_strike,  'PUT')
+            call_theta = _cache.theta(call_key)
+            put_theta  = _cache.theta(put_key)
+            call_abbrev, put_abbrev = ps.straddle_leg_abbrevs(pos)
+            rows.append([
+                call_abbrev, round(ps.margin_k(pos), 2), pos.quantity,
+                round(-call_theta * pos.quantity * 100, 2) if call_theta is not None else "",
+                pos.expiration or "",
+                round(call_theta, 4) if call_theta is not None else "",
+            ])
+            rows.append([
+                put_abbrev, 0, pos.quantity,
+                round(-put_theta * pos.quantity * 100, 2) if put_theta is not None else "",
+                pos.expiration or "",
+                round(put_theta, 4) if put_theta is not None else "",
+            ])
         elif ps.is_spread(pos):
             ot = ps.pricing_option_type(pos)
             short_key = (pos.symbol, pos.expiration, pos.strike, ot)
-            long_key  = (pos.symbol, pos.expiration, pos.long_strike, ot)
+            long_key  = (pos.symbol, pos.expiration, pos.strike2, ot)
             short_theta = _cache.theta(short_key)
             long_theta  = _cache.theta(long_key)
             short_abbrev, long_abbrev = ps.spread_leg_abbrevs(pos)
