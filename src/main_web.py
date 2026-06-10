@@ -54,7 +54,13 @@ app = Flask(
 app.secret_key = hashlib.sha256(_password.encode()).digest()
 
 db.init_db()
-_cache = CacheService()
+_r_default = 0.045
+try:
+    _cfg_startup = cfg_repo.load()
+    _r_default = float(_cfg_startup.get("RiskFreeRate", 4.5)) / 100.0
+except Exception:
+    pass
+_cache = CacheService(r=_r_default)
 
 
 # ---------------------------------------------------------------------------
@@ -448,15 +454,19 @@ def api_get_config():
 
 @app.route("/api/config", methods=["POST"])
 def api_save_config():
-    d = request.json
+    d = request.get_json(silent=True) or {}
     try:
-        margin = int(d["MaximumMarginBasis"])
-        multiplier = float(d["MarginMultiplier"])
+        margin        = int(d["MaximumMarginBasis"])
+        multiplier    = float(d["MarginMultiplier"])
+        risk_free_pct = float(d["RiskFreeRate"])
     except (ValueError, KeyError, TypeError):
         return jsonify({"error": "invalid values"}), 400
     if not (0.5 <= multiplier <= 4.0):
         return jsonify({"error": "Multiplier must be 0.5–4.0"}), 400
-    cfg_repo.save(margin, multiplier)
+    if not (0.0 <= risk_free_pct <= 20.0):
+        return jsonify({"error": "Risk-free rate must be 0–20%"}), 400
+    cfg_repo.save(margin, multiplier, risk_free_pct)
+    _cache._r = risk_free_pct / 100.0   # take effect on the next cache refresh
     sort = d.get("SortOrder")
     if sort:
         cfg_repo.save_sort(sort)

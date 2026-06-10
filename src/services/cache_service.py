@@ -17,9 +17,16 @@ class CacheService:
     Call fetch_all() after loading positions, then use the accessor methods
     (price, opt_price, theta) to read cached values without hitting the network.
     Stock prices expire after 10 min; call fetch_price() to get a fresh value.
+
+    Parameters
+    ----------
+    r : float
+        Risk-free interest rate as a decimal (e.g. 0.045 for 4.5%).  Used for
+        all option pricing, theta, and delta calculations.
     """
 
-    def __init__(self):
+    def __init__(self, r: float = 0.045):
+        self._r = r
         self._price: dict[str, float | None] = {}
         self._price_ts: dict[str, float] = {}
         self._opt_price: dict[tuple, float | None] = {}
@@ -88,18 +95,18 @@ class CacheService:
                     k = (pos.symbol, pos.expiration, s, ot)
                     if k not in self._opt_price:
                         self._opt_price[k] = mds.fetch_option_theoretical_price(
-                            pos.symbol, pos.expiration, s, ot)
+                            pos.symbol, pos.expiration, s, ot, r=self._r)
                 continue
             ot = ps.pricing_option_type(pos)
             key = (pos.symbol, pos.expiration, pos.strike, ot)
             if key not in self._opt_price:
                 self._opt_price[key] = mds.fetch_option_theoretical_price(
-                    pos.symbol, pos.expiration, pos.strike, ot)
+                    pos.symbol, pos.expiration, pos.strike, ot, r=self._r)
             if ps.is_spread(pos):
                 long_key = (pos.symbol, pos.expiration, pos.strike2, ot)
                 if long_key not in self._opt_price:
                     self._opt_price[long_key] = mds.fetch_option_theoretical_price(
-                        pos.symbol, pos.expiration, pos.strike2, ot)
+                        pos.symbol, pos.expiration, pos.strike2, ot, r=self._r)
 
     def _fetch_theta(self, positions: list[Position]) -> None:
         for pos in positions:
@@ -111,18 +118,18 @@ class CacheService:
                     k = (pos.symbol, pos.expiration, s, ot)
                     if k not in self._theta:
                         self._theta[k] = mds.fetch_option_theta(
-                            pos.symbol, pos.expiration, s, ot)
+                            pos.symbol, pos.expiration, s, ot, r=self._r)
                 continue
             ot = ps.pricing_option_type(pos)
             key = (pos.symbol, pos.expiration, pos.strike, ot)
             if key not in self._theta:
                 self._theta[key] = mds.fetch_option_theta(
-                    pos.symbol, pos.expiration, pos.strike, ot)
+                    pos.symbol, pos.expiration, pos.strike, ot, r=self._r)
             if ps.is_spread(pos):
                 long_key = (pos.symbol, pos.expiration, pos.strike2, ot)
                 if long_key not in self._theta:
                     self._theta[long_key] = mds.fetch_option_theta(
-                        pos.symbol, pos.expiration, pos.strike2, ot)
+                        pos.symbol, pos.expiration, pos.strike2, ot, r=self._r)
 
     def _fetch_delta(self, positions: list[Position]) -> None:
         for pos in positions:
@@ -135,10 +142,10 @@ class CacheService:
                     k = (pos.symbol, pos.expiration, s, ot)
                     if k not in self._delta:
                         self._delta[k] = mds.fetch_option_delta(
-                            pos.symbol, pos.expiration, s, ot)
+                            pos.symbol, pos.expiration, s, ot, r=self._r)
                 continue
             ot = ps.pricing_option_type(pos)
             key = (pos.symbol, pos.expiration, pos.strike, ot)
             if key not in self._delta:
                 self._delta[key] = mds.fetch_option_delta(
-                    pos.symbol, pos.expiration, pos.strike, ot)
+                    pos.symbol, pos.expiration, pos.strike, ot, r=self._r)

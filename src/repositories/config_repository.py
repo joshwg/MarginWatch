@@ -10,17 +10,18 @@ def load() -> dict[str, str]:
     return {row["name"]: row["value"] for row in rows}
 
 
-def save(max_margin: int, multiplier: float) -> None:
-    """Persist MaximumMarginBasis and MarginMultiplier to the config table."""
+def save(max_margin: int, multiplier: float, risk_free_pct: float) -> None:
+    """Persist MaximumMarginBasis, MarginMultiplier, and RiskFreeRate to the config table."""
     with db.get_connection() as conn:
-        conn.execute(
-            "INSERT OR REPLACE INTO config (name, value) VALUES (?, ?)",
+        for name, value in [
             ("MaximumMarginBasis", str(max_margin)),
-        )
-        conn.execute(
-            "INSERT OR REPLACE INTO config (name, value) VALUES (?, ?)",
-            ("MarginMultiplier", str(multiplier)),
-        )
+            ("MarginMultiplier",   str(multiplier)),
+            ("RiskFreeRate",       str(risk_free_pct)),
+        ]:
+            conn.execute(
+                "INSERT OR REPLACE INTO config (name, value) VALUES (?, ?)",
+                (name, value),
+            )
         conn.commit()
 
 

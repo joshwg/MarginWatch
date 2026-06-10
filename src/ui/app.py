@@ -29,7 +29,8 @@ class MarginWatchApp(tk.Tk):
 
         db.init_db()
         self._config = cfg_repo.load()
-        self._cache = CacheService()
+        _r = utils.parse_float(self._config.get("RiskFreeRate", "4.5"), 4.5) / 100.0
+        self._cache = CacheService(r=_r)
         self._col_sort: tuple[str, str] | None = None  # (col_key, "asc"|"desc")
         self._refreshing = False  # re-entrancy guard
         self._refresh_pending = False
@@ -45,8 +46,9 @@ class MarginWatchApp(tk.Tk):
 
     def _save_config(self):
         try:
-            margin = int(self._margin_var.get())
-            multiplier = float(self._multiplier_var.get())
+            margin        = int(self._margin_var.get())
+            multiplier    = float(self._multiplier_var.get())
+            risk_free_pct = float(self._risk_free_var.get())
         except ValueError:
             messagebox.showerror("Invalid input", "Please enter valid numeric values.")
             return
@@ -54,9 +56,14 @@ class MarginWatchApp(tk.Tk):
             messagebox.showerror("Invalid multiplier",
                                  "Multiplier must be between 0.5 and 4.0.")
             return
-        cfg_repo.save(margin, multiplier)
+        if not (0.0 <= risk_free_pct <= 20.0):
+            messagebox.showerror("Invalid rate", "Risk-free rate must be between 0 and 20%.")
+            return
+        cfg_repo.save(margin, multiplier, risk_free_pct)
         self._config["MaximumMarginBasis"] = str(margin)
-        self._config["MarginMultiplier"] = str(multiplier)
+        self._config["MarginMultiplier"]   = str(multiplier)
+        self._config["RiskFreeRate"]       = str(risk_free_pct)
+        self._cache._r = risk_free_pct / 100.0
         self._config_saved_lbl.config(text="Requirements Saved")
         self.after(3000, lambda: self._config_saved_lbl.config(text=""))
 
@@ -168,8 +175,17 @@ class MarginWatchApp(tk.Tk):
                     textvariable=self._multiplier_var, width=6,
                     format="%.1f").grid(row=1, column=1, padx=6, pady=(2, 4), sticky=tk.W)
 
+        ttk.Label(config_frame, text="Risk-Free Rate % (0 – 20):").grid(
+            row=2, column=0, sticky=tk.W, padx=6, pady=(2, 4))
+        initial_rf = utils.parse_float(
+            self._config.get("RiskFreeRate", "4.5"), 4.5)
+        self._risk_free_var = tk.StringVar(value=f"{initial_rf:.1f}")
+        ttk.Spinbox(config_frame, from_=0.0, to=20.0, increment=0.1,
+                    textvariable=self._risk_free_var, width=6,
+                    format="%.1f").grid(row=2, column=1, padx=6, pady=(2, 4), sticky=tk.W)
+
         save_row = ttk.Frame(config_frame)
-        save_row.grid(row=2, column=0, columnspan=2, padx=6, pady=(0, 8), sticky=tk.E)
+        save_row.grid(row=3, column=0, columnspan=2, padx=6, pady=(0, 8), sticky=tk.E)
         ttk.Button(save_row, text="Save", command=self._save_config).pack(side=tk.LEFT)
         self._config_saved_lbl = ttk.Label(save_row, text="", foreground="green")
         self._config_saved_lbl.pack(side=tk.LEFT, padx=(8, 0))

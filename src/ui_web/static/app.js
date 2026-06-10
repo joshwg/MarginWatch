@@ -101,6 +101,8 @@ async function loadConfig() {
     document.getElementById('cfgMargin').value = cfg.MaximumMarginBasis || 250000;
     document.getElementById('cfgMultiplier').value =
         parseFloat(cfg.MarginMultiplier || 1.5).toFixed(1);
+    document.getElementById('cfgRiskFree').value =
+        parseFloat(cfg.RiskFreeRate || 4.5).toFixed(1);
     const radio = document.querySelector(
         `input[name="sort"][value="${cfg.SortOrder || 'alpha'}"]`
     );
@@ -310,17 +312,22 @@ function updateColHeaders() {
 // ---------------------------------------------------------------------------
 
 async function saveConfig() {
-    const margin     = parseInt(document.getElementById('cfgMargin').value);
-    const multiplier = parseFloat(document.getElementById('cfgMultiplier').value);
-    const sort       = document.querySelector('input[name="sort"]:checked').value;
-    if (isNaN(margin) || isNaN(multiplier)) { alert('Enter valid numeric values.'); return; }
+    const margin      = parseInt(document.getElementById('cfgMargin').value);
+    const multiplier  = parseFloat(document.getElementById('cfgMultiplier').value);
+    const riskFree    = parseFloat(document.getElementById('cfgRiskFree').value);
+    const sort        = document.querySelector('input[name="sort"]:checked').value;
+    if (isNaN(margin) || isNaN(multiplier) || isNaN(riskFree)) {
+        alert('Enter valid numeric values.'); return;
+    }
     if (multiplier < 0.5 || multiplier > 4.0) { alert('Multiplier must be 0.5–4.0.'); return; }
+    if (riskFree < 0 || riskFree > 20) { alert('Risk-free rate must be 0–20%.'); return; }
     const resp = await fetch('/api/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
             MaximumMarginBasis: margin,
             MarginMultiplier: multiplier,
+            RiskFreeRate: riskFree,
             SortOrder: sort,
         }),
     });
