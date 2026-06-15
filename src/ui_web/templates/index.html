@@ -61,7 +61,8 @@
           <th class="sortable text-center" data-col="qty">#</th>
           <th class="sortable text-end" data-col="margin">Margin</th>
           <th class="sortable text-end" data-col="opt">$/shr</th>
-          <th class="sortable text-end" data-col="theta">Theta</th>
+          <th class="sortable text-end" data-col="theta"      style="width:68px">Theta</th>
+          <th class="sortable text-end" data-col="theta_norm" style="width:58px">θ/10k</th>
           <th class="mw-actions-col"></th>
         </tr>
       </thead>
@@ -99,7 +100,7 @@
         </div>
         <div class="col-auto">
           <button class="btn btn-sm btn-primary" id="btnSaveConfig">Save</button>
-          <span id="cfgSavedMsg" class="ms-2 text-success small" style="display:none">Saved</span>
+          <span id="cfgStatusMsg" class="ms-2 small" style="display:none"></span>
         </div>
       </div>
     </div>

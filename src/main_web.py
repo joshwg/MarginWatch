@@ -316,6 +316,8 @@ def api_positions():
             "opt_str": display["opt_str"],
             "theta_str": display["theta_str"],
             "theta_dollars": display["theta_dollars"],
+            "theta_norm": round(display["theta_dollars"] / display["margin"] * 10, 1)
+                          if display["theta_dollars"] is not None and display["margin"] else None,
             "is_stock_row": display["is_stock_row"],
             "is_profitable": display["is_profitable"],
             "delta": display["delta"],

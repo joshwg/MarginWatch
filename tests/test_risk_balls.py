@@ -62,7 +62,7 @@ def _put(symbol="SPY", strike=500.0, expiry=None):
         id=1, symbol=symbol, option_type="PUT",
         strike=strike, expiration=expiry or _EXPIRY,
         quantity=2, open_date=date.today().isoformat(),
-        long_shares=None, long_cost=None, long_strike=None,
+        long_shares=None, long_cost=None, strike2=None,
     )
 
 
@@ -72,7 +72,7 @@ def _stock_no_cover():
         id=2, symbol="AAPL", option_type="STOCK",
         strike=0.0, expiration="9999-12-31",
         quantity=0, open_date=date.today().isoformat(),
-        long_shares=100, long_cost=180.0, long_strike=None,
+        long_shares=100, long_cost=180.0, strike2=None,
     )
 
 

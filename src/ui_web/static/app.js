@@ -138,8 +138,10 @@ function renderTable() {
             else if (col === 'margin')   { va = a.margin;       vb = b.margin; }
             else if (col === 'opt')      { va = parseFloat(a.opt_str) || -Infinity;
                                            vb = parseFloat(b.opt_str) || -Infinity; }
-            else if (col === 'theta')    { va = a.theta_dollars ?? -Infinity;
-                                           vb = b.theta_dollars ?? -Infinity; }
+            else if (col === 'theta')      { va = a.theta_dollars ?? -Infinity;
+                                             vb = b.theta_dollars ?? -Infinity; }
+            else if (col === 'theta_norm') { va = a.theta_norm ?? -Infinity;
+                                             vb = b.theta_norm ?? -Infinity; }
             if (va < vb) return dir === 'asc' ? -1 : 1;
             if (va > vb) return dir === 'asc' ?  1 : -1;
             return 0;
@@ -203,7 +205,8 @@ function renderTable() {
         const qtyCell    = mkTd(pos.qty,                   'text-center');
         const marginCell = mkTd(pos.margin.toFixed(1),     'text-end');
         const optCell    = mkTd(pos.opt_str,               'text-end');
-        const thetaCell  = mkTd(pos.theta_str,             'text-end');
+        const thetaCell     = mkTd(pos.theta_str,                                            'text-end');
+        const thetaNormCell = mkTd(pos.theta_norm != null ? pos.theta_norm.toFixed(1) : '—', 'text-end');
 
         const actCell = document.createElement('td');
         actCell.className = 'text-center';
@@ -218,7 +221,7 @@ function renderTable() {
             actCell.appendChild(mergeBtn);
         }
 
-        tr.append(posCell, qtyCell, marginCell, optCell, thetaCell, actCell);
+        tr.append(posCell, qtyCell, marginCell, optCell, thetaCell, thetaNormCell, actCell);
         _addRowInteractions(tr, pos);
         tbody.appendChild(tr);
     }
@@ -321,21 +324,43 @@ async function saveConfig() {
     }
     if (multiplier < 0.5 || multiplier > 4.0) { alert('Multiplier must be 0.5–4.0.'); return; }
     if (riskFree < 0 || riskFree > 20) { alert('Risk-free rate must be 0–20%.'); return; }
-    const resp = await fetch('/api/config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            MaximumMarginBasis: margin,
-            MarginMultiplier: multiplier,
-            RiskFreeRate: riskFree,
-            SortOrder: sort,
-        }),
-    });
-    if (resp.ok) {
-        loadPositions();
-        const msg = document.getElementById('cfgSavedMsg');
+
+    const btn = document.getElementById('btnSaveConfig');
+    const msg = document.getElementById('cfgStatusMsg');
+
+    const showMsg = (text, cssClass, durationMs) => {
+        msg.textContent = text;
+        msg.className = `ms-2 small ${cssClass}`;
         msg.style.display = 'inline';
-        setTimeout(() => { msg.style.display = 'none'; }, SAVED_MSG_DISMISS_MS);
+        setTimeout(() => { msg.style.display = 'none'; }, durationMs);
+    };
+
+    btn.disabled = true;
+    showMsg('Saving…', 'text-muted', 60000);   // placeholder; replaced on completion
+
+    try {
+        const resp = await fetch('/api/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                MaximumMarginBasis: margin,
+                MarginMultiplier: multiplier,
+                RiskFreeRate: riskFree,
+                SortOrder: sort,
+            }),
+        });
+        if (resp.ok) {
+            loadPositions();
+            showMsg('Saved', 'text-success', SAVED_MSG_DISMISS_MS);
+        } else {
+            const body = await resp.json().catch(() => ({}));
+            showMsg('Error: ' + (body.error || `server returned ${resp.status}`),
+                    'text-danger', SAVED_MSG_DISMISS_MS * 2);
+        }
+    } catch (err) {
+        showMsg('Error: ' + err.message, 'text-danger', SAVED_MSG_DISMISS_MS * 2);
+    } finally {
+        btn.disabled = false;
     }
 }
 

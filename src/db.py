@@ -1,13 +1,9 @@
 import os
 import sqlite3
 
-DB_DIR = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "data"))
-DB_PATH = os.path.join(DB_DIR, "marginwatch.db")
+from config import DATA_DIR
 
-DEFAULT_CONFIG = {
-    "MaximumMarginBasis": "250000",
-    "MarginMultiplier": "1.5",
-}
+DB_PATH = str(DATA_DIR / "marginwatch.db")
 
 _CREATE_POSITIONS = """
     CREATE TABLE IF NOT EXISTS positions (
@@ -34,7 +30,7 @@ _CREATE_POSITIONS = """
 
 
 def get_connection() -> sqlite3.Connection:
-    os.makedirs(DB_DIR, exist_ok=True)
+    os.makedirs(str(DATA_DIR), exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
@@ -73,13 +69,6 @@ def init_db() -> None:
 
         _migrate_positions(conn)
         conn.execute(_CREATE_POSITIONS)
-
-        for name, value in DEFAULT_CONFIG.items():
-            conn.execute(
-                "INSERT OR IGNORE INTO config (name, value) VALUES (?, ?)",
-                (name, value),
-            )
-
         conn.commit()
 
 

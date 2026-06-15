@@ -87,7 +87,7 @@ if __name__ == "__main__":
     import os, sys
 
     out = os.path.join(os.path.dirname(__file__),
-                       "src", "ui_web", "static", "favicon.ico")
+                       "..", "src", "ui_web", "static", "favicon.ico")
 
     img32 = make_frame(32)
     img16 = make_frame(16)
