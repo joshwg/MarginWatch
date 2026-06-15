@@ -38,11 +38,12 @@ def compute_display(pos: Position, cache: CacheService) -> dict:
 
     days = ps.days_to_expiry(pos)
     bg = styles.expiry_color(days)
+    margin_k = ps.margin_k(pos)
     return {
         "abbrev": short_line,
         "abbrev2": long_line,
         "qty": ps.display_quantity(pos),
-        "margin": ps.margin_k(pos),
+        "margin": margin_k,
         "bg": bg,
         "fg": styles.text_color(bg),
         "price": price,
@@ -50,6 +51,7 @@ def compute_display(pos: Position, cache: CacheService) -> dict:
         "opt_str": opt_str,
         "theta_dollars": td,
         "theta_str": f"${round(td):,d}" if td is not None else "—",
+        "theta_norm": round(td / margin_k * 10, 1) if (td is not None and margin_k) else None,
         "is_stock_row": ps.is_stock(pos),
         "is_profitable": ps.is_profitable(pos, price),
     }
@@ -108,6 +110,9 @@ def build_row(
              width=6, anchor=tk.E).pack(side=tk.LEFT)
     tk.Label(row_frame, text=display["theta_str"], bg=bg, fg=fg,
              width=6, anchor=tk.E).pack(side=tk.LEFT)
+    theta_norm = display["theta_norm"]
+    tk.Label(row_frame, text=f"{theta_norm:.1f}" if theta_norm is not None else "—",
+             bg=bg, fg=fg, width=6, anchor=tk.E).pack(side=tk.LEFT)
 
     row_id = pos.id
     sym = pos.symbol

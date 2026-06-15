@@ -300,7 +300,7 @@ function mkRowBtn(label, handler) {
 
 function updateColHeaders() {
     const labels = {
-        position: 'Position', qty: '#', margin: 'Margin', opt: '$/shr', theta: 'Theta',
+        position: 'Position', qty: '#', margin: 'Margin', opt: '$/shr', theta: 'Theta', theta_norm: 'θ/10k',
     };
     document.querySelectorAll('#positionsTable thead th.sortable').forEach(th => {
         const col = th.dataset.col;

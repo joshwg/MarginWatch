@@ -24,7 +24,7 @@ class MarginWatchApp(tk.Tk):
         print("Starting...")
         super().__init__()
         self.title("MarginWatch")
-        self.geometry("460x800")
+        self.geometry("504x800")
         self.resizable(False, False)
 
         db.init_db()
@@ -137,6 +137,7 @@ class MarginWatchApp(tk.Tk):
             ("Margin", 58, "margin"),
             ("$/shr", 52, "opt"),
             ("Theta", 42, "theta"),
+            ("θ/10k", 42, "theta_norm"),
             ("", 44, None),
         ]
         hdr = ttk.Frame(self._rows_frame)
@@ -236,7 +237,7 @@ class MarginWatchApp(tk.Tk):
 
     def _update_col_headers(self):
         _BASE = {"position": "Position", "qty": "#", "margin": "Margin",
-                 "opt": "$/shr", "theta": "Theta"}
+                 "opt": "$/shr", "theta": "Theta", "theta_norm": "θ/10k"}
         for key, lbl in self._hdr_labels.items():
             base = _BASE[key]
             if self._col_sort and self._col_sort[0] == key:
