@@ -14,6 +14,7 @@ import hashlib
 import io
 import logging
 import os
+import threading
 from datetime import datetime, timedelta
 
 logging.basicConfig(
@@ -61,6 +62,17 @@ try:
 except Exception:
     pass
 _cache = CacheService(r=_r_default)
+
+# Warm the cache in the background so the first page load is not blocked by
+# network calls.  Positions are visible immediately; prices fill in as the
+# thread completes.
+def _startup_prefetch() -> None:
+    try:
+        _cache.fetch_all(pos_repo.get_open_positions())
+    except Exception:
+        pass
+
+threading.Thread(target=_startup_prefetch, daemon=True).start()
 
 
 # ---------------------------------------------------------------------------
@@ -152,7 +164,16 @@ def _debug_enabled():
 @app.errorhandler(Exception)
 def handle_exception(e):
     import traceback
-    app.logger.error(traceback.format_exc())
+    from werkzeug.exceptions import HTTPException
+    # Always log method + URL so 404s are diagnosable.
+    app.logger.error(
+        "%s %s → %s\n%s",
+        request.method, request.path, type(e).__name__, traceback.format_exc(),
+    )
+    if isinstance(e, HTTPException):
+        # Preserve the original HTTP status code (e.g. 404, 405) instead of
+        # always returning 500.
+        return jsonify({"error": e.description}), e.code
     return jsonify({"error": str(e)}), 500
 
 
@@ -238,6 +259,24 @@ def index():
 # ---------------------------------------------------------------------------
 # Positions API
 # ---------------------------------------------------------------------------
+
+def _prefetch_symbol(symbol: str) -> None:
+    """Fetch fresh price and option data for *symbol* in a daemon thread.
+
+    Called after a position is saved so the next GET /api/positions response
+    has data ready without blocking the save response on network calls.
+    Any exception is silently swallowed — a background prefetch failure is
+    non-fatal; the table will just show '—' until the next manual refresh.
+    """
+    try:
+        positions = [p for p in pos_repo.get_open_positions() if p.symbol == symbol]
+        if positions:
+            _cache.fetch_all(positions)
+        else:
+            _cache.fetch_price(symbol)
+    except Exception:
+        pass
+
 
 def _effective_expiration(r) -> str:
     """Sort key for expiration: plain stock (no cover) always sorts last."""
@@ -409,19 +448,27 @@ def api_get_position(row_id: int):
 
 @app.route("/api/positions", methods=["POST"])
 def api_add_position():
-    d = request.json
+    d = request.get_json(silent=True)
+    if not d:
+        return jsonify({"error": "missing or invalid JSON body"}), 400
     _normalize_position_data(d)
     pos_repo.insert_position(d)
-    _cache.invalidate(d["symbol"])
+    symbol = d["symbol"]
+    _cache.invalidate(symbol)
+    threading.Thread(target=_prefetch_symbol, args=(symbol,), daemon=True).start()
     return jsonify({"ok": True})
 
 
 @app.route("/api/positions/<int:row_id>", methods=["PUT"])
 def api_update_position(row_id: int):
-    d = request.json
+    d = request.get_json(silent=True)
+    if not d:
+        return jsonify({"error": "missing or invalid JSON body"}), 400
     _normalize_position_data(d)
     pos_repo.update_position(row_id, d)
-    _cache.invalidate(d["symbol"])
+    symbol = d["symbol"]
+    _cache.invalidate(symbol)
+    threading.Thread(target=_prefetch_symbol, args=(symbol,), daemon=True).start()
     return jsonify({"ok": True})
 
 
