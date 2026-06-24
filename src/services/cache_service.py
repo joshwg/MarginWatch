@@ -25,8 +25,9 @@ class CacheService:
         all option pricing, theta, and delta calculations.
     """
 
-    def __init__(self, r: float = 0.045):
+    def __init__(self, r: float = 0.045, use_extended: bool = False):
         self._r = r
+        self._use_extended = use_extended
         self._price: dict[str, float | None] = {}
         self._price_ts: dict[str, float] = {}
         self._opt_price: dict[tuple, float | None] = {}
@@ -40,6 +41,14 @@ class CacheService:
     # ------------------------------------------------------------------
     # Public interface
     # ------------------------------------------------------------------
+
+    def set_extended_hours(self, value: bool) -> None:
+        """Switch extended-hours mode and clear all cached prices so they re-fetch."""
+        if self._use_extended == value:
+            return
+        self._use_extended = value
+        self._price.clear()
+        self._price_ts.clear()
 
     def invalidate(self, symbol: str) -> None:
         """Drop all cached data for *symbol* so the next fetch is fresh."""
@@ -67,7 +76,7 @@ class CacheService:
         A None result (fetch failed) is not cached so the next call retries immediately.
         """
         if time.monotonic() - self._price_ts.get(symbol, 0.0) > _PRICE_TTL:
-            price = mds.fetch_last_price(symbol)
+            price = mds.fetch_last_price(symbol, use_extended=self._use_extended)
             if price is not None:
                 self._price[symbol] = price
                 self._price_ts[symbol] = time.monotonic()

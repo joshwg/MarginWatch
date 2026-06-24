@@ -59,6 +59,15 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (document.activeElement?.closest('#confirmModal')) document.activeElement.blur();
     });
 
+    document.getElementById('cfgExtHours').addEventListener('change', async function () {
+        await fetch('/api/extended-hours', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled: this.checked }),
+        });
+        loadPositions();
+    });
+
     document.getElementById('btnAdd').addEventListener('click', openAddModal);
     document.getElementById('btnRefresh').addEventListener('click', refreshPrices);
     document.getElementById('btnSaveConfig').addEventListener('click', saveConfig);
@@ -180,6 +189,7 @@ async function loadConfig() {
         parseFloat(cfg.MarginMultiplier || 1.5).toFixed(1);
     document.getElementById('cfgRiskFree').value =
         parseFloat(cfg.RiskFreeRate || 4.5).toFixed(1);
+    // cfgExtHours intentionally not loaded from config — defaults to unchecked each session
     const radio = document.querySelector(
         `input[name="sort"][value="${cfg.SortOrder || 'alpha'}"]`
     );

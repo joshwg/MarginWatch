@@ -35,13 +35,29 @@ def _valid_price(price) -> bool:
         return False
 
 
-def fetch_last_price(symbol: str) -> float | None:
+def fetch_last_price(symbol: str, use_extended: bool = False) -> float | None:
     """Return the last traded price for *symbol*, or None on failure.
 
-    Tries fast_info.last_price first (live intraday price); falls back to the
-    most recent closing price from history() if fast_info returns None.
+    When use_extended=True, prefers post-market then pre-market price if the
+    extended-hours session is active; falls back to the regular-session price.
+    In regular mode, tries fast_info.last_price first then history().
     Prices outside [_PRICE_MIN, _PRICE_MAX] are treated as data errors.
     """
+    if use_extended:
+        try:
+            from option_lib.yahoo_data import get_stock_info
+            info = get_stock_info(symbol)
+            if info.get('success'):
+                ext = info.get('post_market_price') or info.get('pre_market_price')
+                reg = info.get('current_price')
+                price = ext or reg
+                if price and _valid_price(price):
+                    return float(price)
+        except ModuleNotFoundError:
+            pass  # option_lib not installed — fall through to yfinance path
+        except Exception as exc:
+            log.warning("fetch_last_price(%s) extended-hours fetch failed: %s", symbol, exc)
+
     import yfinance as yf
     try:
         ticker = yf.Ticker(symbol)

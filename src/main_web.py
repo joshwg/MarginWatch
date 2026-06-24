@@ -61,7 +61,7 @@ try:
     _r_default = float(_cfg_startup.get("RiskFreeRate", 4.5)) / 100.0
 except Exception:
     pass
-_cache = CacheService(r=_r_default)
+_cache = CacheService(r=_r_default)   # use_extended always starts False
 
 # Warm the cache in the background so the first page load is not blocked by
 # network calls.  Positions are visible immediately; prices fill in as the
@@ -226,6 +226,7 @@ def login():
             session.clear()
             session["authenticated"] = True
             _touch_session()
+            _cache.set_extended_hours(False)   # reset to default on each login
             return redirect(url_for("index"))
         error = "Incorrect password."
     return render_template("login.html", error=error)
@@ -556,6 +557,18 @@ def api_get_config():
     return jsonify(cfg_repo.load())
 
 
+@app.route("/api/extended-hours", methods=["POST"])
+def api_set_extended_hours():
+    """Toggle extended-hours pricing without a full config save.
+
+    Clears cached stock prices so the next /api/prices call re-fetches
+    with the new setting.  Not persisted — resets to False on login.
+    """
+    d = request.get_json(silent=True) or {}
+    _cache.set_extended_hours(bool(d.get("enabled", False)))
+    return jsonify({"ok": True})
+
+
 @app.route("/api/config", methods=["POST"])
 def api_save_config():
     d = request.get_json(silent=True) or {}
@@ -569,8 +582,10 @@ def api_save_config():
         return jsonify({"error": "Multiplier must be 0.5–4.0"}), 400
     if not (0.0 <= risk_free_pct <= 20.0):
         return jsonify({"error": "Risk-free rate must be 0–20%"}), 400
+    use_extended = bool(d.get("UseExtendedHours", False))
     cfg_repo.save(margin, multiplier, risk_free_pct)
-    _cache._r = risk_free_pct / 100.0   # take effect on the next cache refresh
+    _cache._r = risk_free_pct / 100.0        # take effect on the next cache refresh
+    _cache.set_extended_hours(use_extended)  # session-only; not persisted to config
     sort = d.get("SortOrder")
     if sort:
         cfg_repo.save_sort(sort)
