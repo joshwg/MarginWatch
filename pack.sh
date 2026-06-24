@@ -5,7 +5,7 @@
 #
 #   MarginWatch/               web server source (no desktop files or tests)
 #     requirements.txt
-#     src/  (excluding ui/ ui_styles.py main.py)
+#     src/  (excluding ui/ and main.py — desktop-only files)
 #   option_lib/                shared library (sibling directory)
 #
 # Deploy on the server:
@@ -30,19 +30,22 @@ OUT="$PARENT/$PROJECT.tgz"
 rm -f "$OUT"
 
 tar -czf "$OUT" \
+    --mode='u=rwX,g=rwX,o=rX' \
     --exclude='.git' \
     --exclude='.gitignore' \
+    --exclude='.claude' \
     --exclude='venv' \
     --exclude='__pycache__' \
     --exclude='*.pyc' \
     --exclude='*.pyo' \
     --exclude='*.bat' \
+    --exclude='*.sh' \
+    --exclude='*.md' \
     --exclude='*/tests' \
-    --exclude='MarginWatch/build' \
+    --exclude='*/build' \
     --exclude='.pytest_cache' \
     --exclude='*/.pytest_cache' \
     --exclude='MarginWatch/src/ui' \
-    --exclude='MarginWatch/src/ui_styles.py' \
     --exclude='MarginWatch/src/main.py' \
     -C "$PARENT" \
     "$PROJECT" \

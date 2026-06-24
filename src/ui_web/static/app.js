@@ -256,17 +256,26 @@ function renderTable() {
         if (pos.itm) {
             const dot = document.createElement('span');
             dot.className = 'mw-ind mw-ind-itm';
-            // Covered call ITM = good (stock rose past strike, profitable assignment)
-            // Put/call ITM = bad (short option losing, potential assignment at a loss)
-            dot.style.backgroundColor = pos.is_stock_row ? COLOR_ITM_GOOD : COLOR_ITM_BAD;
+            // Yellow when barely ITM (< $1 or < 3% of strike) — close to the edge.
+            // Green for covered calls clearly ITM (profitable assignment likely).
+            // Red for short options clearly ITM (losing position).
+            const barelyItm = pos.itm_amount != null && pos.strike != null &&
+                              (pos.itm_amount < 1.0 || pos.itm_amount < 0.03 * pos.strike);
+            dot.style.backgroundColor = barelyItm
+                ? '#ca8a04'
+                : pos.is_stock_row ? COLOR_ITM_GOOD : COLOR_ITM_BAD;
             dot.textContent = 'i';
             dot.title = pos.itm_amount != null
                 ? `ITM $${pos.itm_amount.toFixed(2)}`
                 : 'In the money';
-            // Stop the row's mouseenter from stealing focus while the cursor
-            // is over the ball — otherwise the price tooltip suppresses the
-            // native title tooltip before it has a chance to appear.
-            dot.addEventListener('mouseenter', e => e.stopPropagation());
+            // When the cursor enters the ITM ball, cancel any pending row hover
+            // timer and hide any already-visible price tooltip so only the
+            // native title tooltip (ITM amount) appears.
+            dot.addEventListener('mouseenter', e => {
+                e.stopPropagation();
+                if (_hoverTimer) { clearTimeout(_hoverTimer); _hoverTimer = null; }
+                hideTooltip();
+            });
             dot.addEventListener('mouseleave', e => e.stopPropagation());
             posCell.appendChild(dot);
             if (pos.itm_amount != null) {
