@@ -12,7 +12,7 @@
 <div class="container-fluid mw-app py-2">
 
   <!-- Top bar -->
-  <div class="d-flex align-items-start gap-3 mb-2 p-2 bg-light border rounded">
+  <div class="d-flex align-items-start gap-3 mb-2 p-2 bg-light border rounded mw-top-bar">
     <!-- Summary -->
     <div class="mw-summary">
       <div class="d-flex gap-1 align-items-center">
@@ -51,6 +51,16 @@
       <a class="btn btn-sm btn-outline-secondary" href="/logout" title="Log out">&#128682;</a>
     </div>
   </div>
+
+  <!-- Fetch-error banner (hidden until errors arrive) -->
+  <div id="fetchErrorBanner" class="alert alert-warning alert-dismissible fade show py-2 mb-2 d-none" role="alert">
+    <strong>⚠ Data fetch error</strong> — some market data could not be retrieved. Prices shown as&nbsp;— may be stale.
+    <ul id="fetchErrorList" class="mb-0 mt-1 small"></ul>
+    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+  </div>
+
+  <!-- Live fetch-progress status line -->
+  <div id="fetchStatus" class="small text-muted px-1 mb-1 d-none"></div>
 
   <!-- Positions table -->
   <div class="mw-table-wrap">

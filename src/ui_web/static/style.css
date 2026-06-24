@@ -1,12 +1,15 @@
 /* MarginWatch web UI — supplemental styles on top of Bootstrap */
 
-.mw-app { max-width: 560px; }
+.mw-app { max-width: 560px; overflow-x: clip; }
 
 .mw-summary { min-width: 105px; }
 .mw-val { min-width: 58px; display: inline-block; text-align: right; }
 
 /* Table scroll container — height adapts to viewport */
-.mw-table-wrap { max-height: calc(100dvh - 220px); min-height: 200px; overflow-y: auto; }
+.mw-table-wrap { max-height: calc(100dvh - 220px); min-height: 200px; overflow-y: auto; overflow-x: auto; }
+
+/* Top bar wraps on narrow screens so buttons drop to a second line */
+.mw-top-bar { flex-wrap: wrap; }
 
 /* Sticky header inside scroll */
 #positionsTable thead th { position: sticky; top: 0; z-index: 1; }
@@ -76,6 +79,10 @@
 @media (max-width: 575px) {
   .mw-legend { flex-direction: column; align-items: flex-start; gap: 0.35rem; }
 }
+
+/* ITM amount label shown inline on mobile; hidden on desktop where hover title works */
+.mw-itm-inline { font-size: 0.72rem; color: inherit; opacity: 0.75; margin-left: 2px; margin-right: 4px; }
+@media (min-width: 600px) { .mw-itm-inline { display: none; } }
 
 /* Stock row: underlined position name */
 .mw-stock-pos { text-decoration: underline; }

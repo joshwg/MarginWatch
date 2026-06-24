@@ -2,7 +2,11 @@
   "permissions": {
     "allow": [
       "PowerShell(Get-ChildItem -Path \"c:\\\\Users\\\\josh\\\\Docs\\\\lab\\\\MarginWatch\" -Recurse -File | ForEach-Object { $_.FullName } | Sort-Object)",
-      "PowerShell(Get-ChildItem -Path \"c:\\\\Users\\\\josh\\\\Docs\\\\lab\\\\MarginWatch\" -Directory | ForEach-Object { $_.FullName } | Sort-Object)"
+      "PowerShell(Get-ChildItem -Path \"c:\\\\Users\\\\josh\\\\Docs\\\\lab\\\\MarginWatch\" -Directory | ForEach-Object { $_.FullName } | Sort-Object)",
+      "Bash(find /mnt/c/Users/josh/Docs/lab/MarginWatch/venv/lib -path \"*/option_lib*\" 2>/dev/null | head -20)",
+      "Read(//mnt/c/Users/josh/Docs/lab/MarginWatch/venv/**)",
+      "Bash(find /mnt/c/Users/josh/Docs/lab/MarginWatch -name \"*.py\" 2>/dev/null | grep -v venv | grep -i \"massive\\\\|yahoo_data\\\\|option_lib\" | head -20)",
+      "Read(//mnt/c/Users/josh/Docs/lab/**)"
     ]
   }
 }

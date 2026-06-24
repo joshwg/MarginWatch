@@ -15,6 +15,17 @@ print(f"Pricing data: {_provider}"
 _PRICE_MIN =       0.01   # nothing trades below a penny
 _PRICE_MAX  = 1_000_000   # nothing trades above $1M
 
+# Module-level fetch-failure tracking.  Each failed symbol maps to a short
+# human-readable reason.  Callers collect and clear via pop_fetch_failures().
+_fetch_failures: dict[str, str] = {}
+
+
+def pop_fetch_failures() -> dict[str, str]:
+    """Return all fetch failures recorded since the last call, then clear them."""
+    global _fetch_failures
+    result, _fetch_failures = dict(_fetch_failures), {}
+    return result
+
 
 def _valid_price(price) -> bool:
     """Return True only if *price* is a finite number within plausible bounds."""
@@ -41,14 +52,17 @@ def fetch_last_price(symbol: str) -> float | None:
             price = float(df["Close"].iloc[-1]) if not df.empty else None
         if price is None:
             log.warning("fetch_last_price(%s): all methods returned None", symbol)
+            _fetch_failures[symbol] = f"no price data returned by {_provider}"
             return None
         if not _valid_price(price):
             log.warning("fetch_last_price(%s): implausible price %s — treating as unavailable",
                         symbol, price)
+            _fetch_failures[symbol] = f"implausible price ({price}) from {_provider}"
             return None
         return float(price)
     except Exception as exc:
         log.warning("fetch_last_price(%s) failed: %s", symbol, exc)
+        _fetch_failures[symbol] = f"price fetch failed from {_provider} ({type(exc).__name__})"
         return None
 
 
@@ -65,6 +79,8 @@ def fetch_option_theoretical_price(symbol: str, expiration_iso: str,
     except Exception as exc:
         log.warning("fetch_option_theoretical_price(%s %s %s %s) failed: %s",
                     symbol, expiration_iso, strike, option_type, exc)
+        _fetch_failures.setdefault(
+            symbol, f"option data unavailable from {_provider} ({type(exc).__name__})")
         return None
 
 
@@ -81,7 +97,36 @@ def fetch_option_theta(symbol: str, expiration_iso: str,
     except Exception as exc:
         log.warning("fetch_option_theta(%s %s %s %s) failed: %s",
                     symbol, expiration_iso, strike, option_type, exc)
+        _fetch_failures.setdefault(
+            symbol, f"option data unavailable from {_provider} ({type(exc).__name__})")
         return None
+
+
+def fetch_option_greeks(symbol: str, expiration_iso: str,
+                        strike: float, option_type: str,
+                        r: float = 0.045) -> dict:
+    """Return {'price', 'theta', 'delta'} for one contract in a single round-trip.
+
+    Replaces three separate fetch_option_* calls: fetches stock info and IV once,
+    runs the binomial tree model once, and returns all three values together.
+    """
+    _none = {'price': None, 'theta': None, 'delta': None}
+    try:
+        from option_lib.yahoo_data import fetch_option_greeks as _fn
+        result = _fn(symbol, expiration_iso, strike, option_type, r=r)
+        if all(v is None for v in result.values()):
+            _fetch_failures.setdefault(
+                symbol, f"option data unavailable from {_provider}")
+        return result
+    except ModuleNotFoundError:
+        log.debug("option_lib not available — greeks skipped for %s", symbol)
+        return _none
+    except Exception as exc:
+        log.warning("fetch_option_greeks(%s %s %s %s) failed: %s",
+                    symbol, expiration_iso, strike, option_type, exc)
+        _fetch_failures.setdefault(
+            symbol, f"option data unavailable from {_provider} ({type(exc).__name__})")
+        return _none
 
 
 def fetch_option_delta(symbol: str, expiration_iso: str,
@@ -97,4 +142,6 @@ def fetch_option_delta(symbol: str, expiration_iso: str,
     except Exception as exc:
         log.warning("fetch_option_delta(%s %s %s %s) failed: %s",
                     symbol, expiration_iso, strike, option_type, exc)
+        _fetch_failures.setdefault(
+            symbol, f"option data unavailable from {_provider} ({type(exc).__name__})")
         return None

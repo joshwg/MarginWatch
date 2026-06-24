@@ -140,6 +140,7 @@ def _compute_display(pos: Position, cache: CacheService) -> dict:
         "bg": bg,
         "fg": styles.text_color(bg),
         "itm": ps.is_itm(pos, price),
+        "itm_amount": ps.itm_amount(pos, price),
         "opt_str": opt_str,
         "theta_dollars": td,
         "theta_str": f"${round(td):,d}" if td is not None else "—",
@@ -304,10 +305,16 @@ def _sorted_positions(sort: str) -> list:
 
 @app.route("/api/positions")
 def api_positions():
+    """Phase 1: return position list from the database immediately.
+
+    Does NOT block on market-data fetches — uses whatever is already in the
+    cache (populated by the startup prefetch or a previous load).  The client
+    renders the table right away, then calls /api/prices as phase 2 to fill in
+    live prices and greeks.
+    """
     config = cfg_repo.load()
     sort = request.args.get("sort", config.get("SortOrder", "alpha"))
     positions = _sorted_positions(sort)
-    _cache.fetch_all(positions)
 
     max_margin = utils.parse_float(config.get("MaximumMarginBasis", "250000"), 250000.0)
     multiplier = utils.parse_float(config.get("MarginMultiplier", "1.5"), 1.5)
@@ -352,6 +359,7 @@ def api_positions():
             "bg": display["bg"],
             "fg": display["fg"],
             "itm": display["itm"],
+            "itm_amount": display["itm_amount"],
             "opt_str": display["opt_str"],
             "theta_str": display["theta_str"],
             "theta_dollars": display["theta_dollars"],
@@ -373,6 +381,47 @@ def api_positions():
             "avail_margin": round(avail, 1),
             "total_theta": round(total_theta_day),
         },
+        "fetch_errors": _cache.fetch_errors(),
+    })
+
+
+@app.route("/api/prices")
+def api_prices():
+    """Phase 2: fetch live market data and return per-position pricing updates.
+
+    This is the slow call that hits Yahoo Finance / Massive.  The client calls
+    it after the position table is already rendered, using the progress bar to
+    show which symbol is being fetched.  Returns only the price-dependent fields
+    keyed by position id so the client can merge them without a full re-render.
+    """
+    positions = pos_repo.get_open_positions()
+    _cache.fetch_all(positions)
+
+    updates: dict[int, dict] = {}
+    total_theta_day = 0.0
+
+    for pos in positions:
+        display = _compute_display(pos, _cache)
+        if display["theta_dollars"] is not None:
+            total_theta_day += display["theta_dollars"]
+        stock_price = _cache.price(pos.symbol)
+        updates[pos.id] = {
+            "price":         round(stock_price, 2) if stock_price is not None else None,
+            "itm":           display["itm"],
+            "itm_amount":    display["itm_amount"],
+            "opt_str":       display["opt_str"],
+            "theta_str":     display["theta_str"],
+            "theta_dollars": display["theta_dollars"],
+            "theta_norm":    round(display["theta_dollars"] / display["margin"] * 10, 1)
+                             if display["theta_dollars"] is not None and display["margin"] else None,
+            "is_profitable": display["is_profitable"],
+            "delta":         display["delta"],
+        }
+
+    return jsonify({
+        "updates": updates,
+        "total_theta": round(total_theta_day),
+        "fetch_errors": _cache.fetch_errors(),
     })
 
 
@@ -416,6 +465,12 @@ def api_optprice(symbol: str, expiration: str, strike: str, otype: str):
         return jsonify({"symbol": sym, "expiration": expiration,
                         "strike": k, "option_type": ot,
                         "price": None, "theta": None, "error": str(e)})
+
+
+@app.route("/api/fetch-progress")
+def api_fetch_progress():
+    """Return the symbol currently being fetched, for live loading status."""
+    return jsonify({"symbol": _cache.current_fetch})
 
 
 @app.route("/api/refresh", methods=["POST"])

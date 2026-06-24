@@ -5,6 +5,7 @@ let _colSort = null;   // { col: string, dir: 'asc'|'desc' } | null
 let _editId = null;    // null = adding new, number = editing existing
 let _posModal = null;
 let _confirmModal = null;
+let _progressPoller = null;  // interval handle for fetch-progress polling
 
 // ---------------------------------------------------------------------------
 // Init
@@ -81,17 +82,93 @@ async function refreshPrices() {
 
 async function loadPositions() {
     const sort = document.querySelector('input[name="sort"]:checked').value;
+
+    // ── Phase 1: positions from the database (fast) ──────────────────────────
     try {
         const resp = await fetch(`/api/positions?sort=${sort}`);
         if (resp.status === 401) { location.href = '/login'; return; }
         const data = await resp.json();
         _positions = data.positions;
         updateSummary(data.summary);
+        showFetchErrors(data.fetch_errors || []);
     } catch (e) {
         console.error('[MarginWatch] loadPositions failed:', e);
-        _positions = [];
+        _setFetchStatus(`⚠ Load failed: ${e.message || e}`, true);
+        return;
     }
-    renderTable();
+    renderTable();   // show the table immediately with whatever is cached
+
+    // ── Phase 2: live market prices (slow, with progress bar) ────────────────
+    _startProgressPolling();
+    try {
+        const resp = await fetch('/api/prices');
+        if (resp.status === 401) { _stopProgressPolling(); location.href = '/login'; return; }
+        const data = await resp.json();
+        // Merge price-dependent fields into the existing position objects.
+        const upd = data.updates || {};
+        for (const pos of _positions) {
+            if (upd[pos.id]) Object.assign(pos, upd[pos.id]);
+        }
+        // Update theta in the summary (the only summary field that needs prices).
+        const sumEl = document.getElementById('totalTheta');
+        if (sumEl && data.total_theta != null)
+            sumEl.textContent = `$${data.total_theta.toLocaleString()}/d`;
+        showFetchErrors(data.fetch_errors || []);
+    } catch (e) {
+        console.error('[MarginWatch] price fetch failed:', e);
+        _stopProgressPolling();
+        _setFetchStatus(`⚠ Price fetch failed: ${e.message || e}`, true);
+        return;
+    }
+    _stopProgressPolling();
+    renderTable();   // re-render with live prices filled in
+}
+
+function _startProgressPolling() {
+    _setFetchStatus('Loading…');
+    if (_progressPoller) clearInterval(_progressPoller);
+    _progressPoller = setInterval(async () => {
+        // Snapshot the handle so we can detect if the poller was stopped while
+        // the fetch was in-flight and discard stale results.
+        const handle = _progressPoller;
+        try {
+            const r = await fetch('/api/fetch-progress');
+            if (!r.ok || _progressPoller !== handle) return;
+            const { symbol } = await r.json();
+            if (_progressPoller !== handle) return;   // stopped while parsing JSON
+            _setFetchStatus(symbol ? `Loading ${symbol}…` : 'Loading…');
+        } catch { /* ignore poll errors */ }
+    }, 300);
+}
+
+function _stopProgressPolling() {
+    if (_progressPoller) { clearInterval(_progressPoller); _progressPoller = null; }
+    _setFetchStatus('');
+}
+
+function _setFetchStatus(msg, isError = false) {
+    const el = document.getElementById('fetchStatus');
+    if (!el) return;
+    el.textContent = msg;
+    el.classList.toggle('d-none', !msg);
+    el.classList.toggle('text-danger', isError);
+    el.classList.toggle('text-muted', !isError);
+}
+
+function showFetchErrors(errors) {
+    const banner = document.getElementById('fetchErrorBanner');
+    const list   = document.getElementById('fetchErrorList');
+    if (!errors.length) {
+        banner.classList.add('d-none');
+        return;
+    }
+    list.innerHTML = errors.map(e => `<li>${e}</li>`).join('');
+    // Re-show the banner even if the user previously dismissed it, since
+    // the errors may have changed after a refresh.
+    banner.classList.remove('d-none');
+    // Bootstrap may have removed 'show' on dismiss — restore it so the
+    // alert is visible without needing a fade-in trigger.
+    if (!banner.classList.contains('show')) banner.classList.add('show');
 }
 
 async function loadConfig() {
@@ -183,7 +260,21 @@ function renderTable() {
             // Put/call ITM = bad (short option losing, potential assignment at a loss)
             dot.style.backgroundColor = pos.is_stock_row ? COLOR_ITM_GOOD : COLOR_ITM_BAD;
             dot.textContent = 'i';
+            dot.title = pos.itm_amount != null
+                ? `ITM $${pos.itm_amount.toFixed(2)}`
+                : 'In the money';
+            // Stop the row's mouseenter from stealing focus while the cursor
+            // is over the ball — otherwise the price tooltip suppresses the
+            // native title tooltip before it has a chance to appear.
+            dot.addEventListener('mouseenter', e => e.stopPropagation());
+            dot.addEventListener('mouseleave', e => e.stopPropagation());
             posCell.appendChild(dot);
+            if (pos.itm_amount != null) {
+                const lbl = document.createElement('span');
+                lbl.className = 'mw-itm-inline';
+                lbl.textContent = `[${pos.itm_amount.toFixed(2)}]`;
+                posCell.appendChild(lbl);
+            }
         }
         if (pos.is_profitable) {
             const arrow = document.createElement('span');

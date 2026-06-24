@@ -32,6 +32,10 @@ class CacheService:
         self._opt_price: dict[tuple, float | None] = {}
         self._theta: dict[tuple, float | None] = {}
         self._delta: dict[tuple, float | None] = {}
+        # symbol → short error description; persists until cache is reset
+        self._failed: dict[str, str] = {}
+        # Human-readable status of the in-progress fetch ("AAPL", "TSLA options", …)
+        self.current_fetch: str = ""
 
     # ------------------------------------------------------------------
     # Public interface
@@ -48,9 +52,14 @@ class CacheService:
     def fetch_all(self, positions: list[Position]) -> None:
         """Fetch any missing prices and greeks for all positions."""
         self._fetch_prices(positions)
-        self._fetch_opt_prices(positions)
-        self._fetch_theta(positions)
-        self._fetch_delta(positions)
+        self._fetch_greeks(positions)
+        # Collect any new failures; setdefault keeps the first (price) error per symbol
+        for sym, msg in mds.pop_fetch_failures().items():
+            self._failed.setdefault(sym, msg)
+
+    def fetch_errors(self) -> list[str]:
+        """Return human-readable fetch errors, one entry per failed symbol."""
+        return [f"{sym}: {msg}" for sym, msg in sorted(self._failed.items())]
 
     def fetch_price(self, symbol: str) -> float | None:
         """Return the stock price, re-fetching from the network if the cache is expired.
@@ -83,69 +92,47 @@ class CacheService:
 
     def _fetch_prices(self, positions: list[Position]) -> None:
         for sym in {p.symbol for p in positions}:
+            self.current_fetch = sym
             self.fetch_price(sym)
+        self.current_fetch = ""
 
-    def _fetch_opt_prices(self, positions: list[Position]) -> None:
-        for pos in positions:
-            if not pos.strike:
-                continue
-            if ps.is_straddle(pos):
-                put_strike = pos.strike2
-                for s, ot in [(pos.strike, 'CALL'), (put_strike, 'PUT')]:
-                    k = (pos.symbol, pos.expiration, s, ot)
-                    if k not in self._opt_price:
-                        self._opt_price[k] = mds.fetch_option_theoretical_price(
-                            pos.symbol, pos.expiration, s, ot, r=self._r)
-                continue
-            ot = ps.pricing_option_type(pos)
-            key = (pos.symbol, pos.expiration, pos.strike, ot)
-            if key not in self._opt_price:
-                self._opt_price[key] = mds.fetch_option_theoretical_price(
-                    pos.symbol, pos.expiration, pos.strike, ot, r=self._r)
-            if ps.is_spread(pos):
-                long_key = (pos.symbol, pos.expiration, pos.strike2, ot)
-                if long_key not in self._opt_price:
-                    self._opt_price[long_key] = mds.fetch_option_theoretical_price(
-                        pos.symbol, pos.expiration, pos.strike2, ot, r=self._r)
+    def _fetch_greeks(self, positions: list[Position]) -> None:
+        """Fetch price, theta, and delta for every option contract in one pass.
 
-    def _fetch_theta(self, positions: list[Position]) -> None:
+        Replaces the former _fetch_opt_prices / _fetch_theta / _fetch_delta trio.
+        Each contract is fetched with a single fetch_option_greeks() call which:
+          - queries stock info once per symbol (cached)
+          - tries a targeted single-contract OCC quote before falling back to the
+            full option chain (avoiding downloading hundreds of strikes we don't need)
+          - runs the binomial tree model once instead of three times
+        """
         for pos in positions:
             if ps.is_stock(pos) and not pos.strike:
                 continue
             if ps.is_straddle(pos):
-                put_strike = pos.strike2
-                for s, ot in [(pos.strike, 'CALL'), (put_strike, 'PUT')]:
+                for s, ot in [(pos.strike, 'CALL'), (pos.strike2, 'PUT')]:
                     k = (pos.symbol, pos.expiration, s, ot)
                     if k not in self._theta:
-                        self._theta[k] = mds.fetch_option_theta(
-                            pos.symbol, pos.expiration, s, ot, r=self._r)
+                        self.current_fetch = f"{pos.symbol} options"
+                        g = mds.fetch_option_greeks(pos.symbol, pos.expiration, s, ot, r=self._r)
+                        self._opt_price[k] = g['price']
+                        self._theta[k]     = g['theta']
+                        self._delta[k]     = g['delta']
                 continue
-            ot = ps.pricing_option_type(pos)
+            ot  = ps.pricing_option_type(pos)
             key = (pos.symbol, pos.expiration, pos.strike, ot)
             if key not in self._theta:
-                self._theta[key] = mds.fetch_option_theta(
-                    pos.symbol, pos.expiration, pos.strike, ot, r=self._r)
+                self.current_fetch = f"{pos.symbol} options"
+                g = mds.fetch_option_greeks(pos.symbol, pos.expiration, pos.strike, ot, r=self._r)
+                self._opt_price[key] = g['price']
+                self._theta[key]     = g['theta']
+                self._delta[key]     = g['delta']
             if ps.is_spread(pos):
                 long_key = (pos.symbol, pos.expiration, pos.strike2, ot)
                 if long_key not in self._theta:
-                    self._theta[long_key] = mds.fetch_option_theta(
-                        pos.symbol, pos.expiration, pos.strike2, ot, r=self._r)
-
-    def _fetch_delta(self, positions: list[Position]) -> None:
-        for pos in positions:
-            if ps.is_stock(pos) and not pos.strike:
-                continue
-            if ps.is_straddle(pos):
-                # Fetch both legs; worst-case delta is used as the position risk
-                put_strike = pos.strike2
-                for s, ot in [(pos.strike, 'CALL'), (put_strike, 'PUT')]:
-                    k = (pos.symbol, pos.expiration, s, ot)
-                    if k not in self._delta:
-                        self._delta[k] = mds.fetch_option_delta(
-                            pos.symbol, pos.expiration, s, ot, r=self._r)
-                continue
-            ot = ps.pricing_option_type(pos)
-            key = (pos.symbol, pos.expiration, pos.strike, ot)
-            if key not in self._delta:
-                self._delta[key] = mds.fetch_option_delta(
-                    pos.symbol, pos.expiration, pos.strike, ot, r=self._r)
+                    self.current_fetch = f"{pos.symbol} options"
+                    g = mds.fetch_option_greeks(pos.symbol, pos.expiration, pos.strike2, ot, r=self._r)
+                    self._opt_price[long_key] = g['price']
+                    self._theta[long_key]     = g['theta']
+                    self._delta[long_key]     = g['delta']
+        self.current_fetch = ""

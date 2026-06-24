@@ -130,6 +130,24 @@ def is_itm(pos: Position, current_price) -> bool:
     return False
 
 
+def itm_amount(pos: Position, current_price) -> float | None:
+    """Dollar amount by which the short leg is ITM, or None if OTM / unknown."""
+    if current_price is None or not pos.strike:
+        return None
+    if is_call(pos) or is_call_spread(pos) or has_covered_call(pos):
+        amt = current_price - pos.strike
+        return round(amt, 2) if amt > 0 else None
+    if is_put(pos) or is_put_spread(pos):
+        amt = pos.strike - current_price
+        return round(amt, 2) if amt > 0 else None
+    if is_straddle(pos):
+        if current_price > pos.strike:
+            return round(current_price - pos.strike, 2)
+        if pos.strike2 is not None and current_price < pos.strike2:
+            return round(pos.strike2 - current_price, 2)
+    return None
+
+
 def margin_k(pos: Position) -> float:
     """Margin in $k.
     STOCK (covered or not): long_shares × long_cost ÷ 1000.
