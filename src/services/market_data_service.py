@@ -1,17 +1,17 @@
-"""Market data fetchers: stock price and option greeks via yfinance."""
+"""Market data fetchers — routes through option_lib's provider abstraction.
+
+get_provider() selects MassiveDataProvider when MASSIVE_API_KEY is set,
+otherwise falls back to YahooDataProvider.  All fetches go through that
+provider so switching the env var is all that is needed to switch sources.
+"""
 
 import logging
 import os
 
 log = logging.getLogger(__name__)
 
-# Print once at import time so the operator knows which data source is active.
-_provider = "Massive.com" if os.environ.get("MASSIVE_API_KEY") else "Yahoo Finance"
-print(f"Pricing data: {_provider}"
-      + ("" if _provider == "Massive.com" else "  (set MASSIVE_API_KEY to use Massive.com)"))
-
 # Sanity bounds for a stock price.  Anything outside [_PRICE_MIN, _PRICE_MAX]
-# is treated as a yfinance data error and discarded.
+# is treated as a data error and discarded.
 _PRICE_MIN =       0.01   # nothing trades below a penny
 _PRICE_MAX  = 1_000_000   # nothing trades above $1M
 
@@ -27,6 +27,10 @@ def pop_fetch_failures() -> dict[str, str]:
     return result
 
 
+def _provider_name() -> str:
+    return "Massive.com" if os.environ.get("MASSIVE_API_KEY") else "Yahoo Finance"
+
+
 def _valid_price(price) -> bool:
     """Return True only if *price* is a finite number within plausible bounds."""
     try:
@@ -38,47 +42,58 @@ def _valid_price(price) -> bool:
 def fetch_last_price(symbol: str, use_extended: bool = False) -> float | None:
     """Return the last traded price for *symbol*, or None on failure.
 
-    When use_extended=True, prefers post-market then pre-market price if the
-    extended-hours session is active; falls back to the regular-session price.
-    In regular mode, tries fast_info.last_price first then history().
-    Prices outside [_PRICE_MIN, _PRICE_MAX] are treated as data errors.
+    Routes through get_provider() so Massive is used when MASSIVE_API_KEY is set.
+    When use_extended=True, prefers post-market then pre-market price.
+    Falls back to direct yfinance if option_lib is not installed.
     """
-    if use_extended:
-        try:
-            from option_lib.yahoo_data import get_stock_info
-            info = get_stock_info(symbol)
-            if info.get('success'):
-                ext = info.get('post_market_price') or info.get('pre_market_price')
-                reg = info.get('current_price')
-                price = ext or reg
-                if price and _valid_price(price):
-                    return float(price)
-        except ModuleNotFoundError:
-            pass  # option_lib not installed — fall through to yfinance path
-        except Exception as exc:
-            log.warning("fetch_last_price(%s) extended-hours fetch failed: %s", symbol, exc)
+    provider_label = _provider_name()
+    try:
+        from option_lib.data_provider import get_provider
+        info = get_provider().get_stock_info(symbol)
+        if info.get('success'):
+            if use_extended:
+                price = (info.get('post_market_price') or info.get('pre_market_price')
+                         or info.get('current_price'))
+            else:
+                price = info.get('current_price')
+            if price and _valid_price(price):
+                return float(price)
+            if price is not None:
+                log.warning("fetch_last_price(%s): implausible price %s from %s",
+                            symbol, price, provider_label)
+                _fetch_failures[symbol] = f"implausible price ({price}) from {provider_label}"
+                return None
+        # success=False or price=None: fall through to yfinance
+    except ModuleNotFoundError:
+        pass   # option_lib not installed — use yfinance directly
+    except Exception as exc:
+        log.warning("fetch_last_price(%s) provider fetch failed: %s", symbol, exc)
 
+    # Direct yfinance fallback (no option_lib, or provider returned nothing)
     import yfinance as yf
     try:
         ticker = yf.Ticker(symbol)
         price = ticker.fast_info.last_price
+        if price is None:
+            log.debug("fetch_last_price(%s): fast_info.last_price None, trying previous_close", symbol)
+            price = ticker.fast_info.previous_close
         if price is None:
             log.debug("fetch_last_price(%s): fast_info returned None, trying history", symbol)
             df = ticker.history(period="1d", auto_adjust=False)
             price = float(df["Close"].iloc[-1]) if not df.empty else None
         if price is None:
             log.warning("fetch_last_price(%s): all methods returned None", symbol)
-            _fetch_failures[symbol] = f"no price data returned by {_provider}"
+            _fetch_failures[symbol] = f"no price data returned by {provider_label}"
             return None
         if not _valid_price(price):
             log.warning("fetch_last_price(%s): implausible price %s — treating as unavailable",
                         symbol, price)
-            _fetch_failures[symbol] = f"implausible price ({price}) from {_provider}"
+            _fetch_failures[symbol] = f"implausible price ({price}) from {provider_label}"
             return None
         return float(price)
     except Exception as exc:
         log.warning("fetch_last_price(%s) failed: %s", symbol, exc)
-        _fetch_failures[symbol] = f"price fetch failed from {_provider} ({type(exc).__name__})"
+        _fetch_failures[symbol] = f"price fetch failed from {provider_label} ({type(exc).__name__})"
         return None
 
 
@@ -87,8 +102,9 @@ def fetch_option_theoretical_price(symbol: str, expiration_iso: str,
                                     r: float = 0.045) -> float | None:
     """Return the American-binomial theoretical price for the given contract, or None."""
     try:
-        from option_lib.yahoo_data import fetch_option_theoretical_price as _fn
-        return _fn(symbol, expiration_iso, strike, option_type, r=r)
+        from option_lib.data_provider import get_provider
+        return get_provider().fetch_option_theoretical_price(
+            symbol, expiration_iso, strike, option_type, r)
     except ModuleNotFoundError:
         log.debug("option_lib not available — theoretical price skipped for %s", symbol)
         return None
@@ -96,7 +112,7 @@ def fetch_option_theoretical_price(symbol: str, expiration_iso: str,
         log.warning("fetch_option_theoretical_price(%s %s %s %s) failed: %s",
                     symbol, expiration_iso, strike, option_type, exc)
         _fetch_failures.setdefault(
-            symbol, f"option data unavailable from {_provider} ({type(exc).__name__})")
+            symbol, f"option data unavailable from {_provider_name()} ({type(exc).__name__})")
         return None
 
 
@@ -105,8 +121,9 @@ def fetch_option_theta(symbol: str, expiration_iso: str,
                        r: float = 0.045) -> float | None:
     """Return theta (daily $ decay per share) for the given contract, or None."""
     try:
-        from option_lib.yahoo_data import fetch_option_theta as _fn
-        return _fn(symbol, expiration_iso, strike, option_type, r=r)
+        from option_lib.data_provider import get_provider
+        return get_provider().fetch_option_theta(
+            symbol, expiration_iso, strike, option_type, r)
     except ModuleNotFoundError:
         log.debug("option_lib not available — theta skipped for %s", symbol)
         return None
@@ -114,7 +131,7 @@ def fetch_option_theta(symbol: str, expiration_iso: str,
         log.warning("fetch_option_theta(%s %s %s %s) failed: %s",
                     symbol, expiration_iso, strike, option_type, exc)
         _fetch_failures.setdefault(
-            symbol, f"option data unavailable from {_provider} ({type(exc).__name__})")
+            symbol, f"option data unavailable from {_provider_name()} ({type(exc).__name__})")
         return None
 
 
@@ -124,19 +141,18 @@ def fetch_option_greeks(symbol: str, expiration_iso: str,
                         use_extended: bool = False) -> dict:
     """Return {'price', 'theta', 'delta'} for one contract in a single round-trip.
 
-    Replaces three separate fetch_option_* calls: fetches stock info and IV once,
-    runs the binomial tree model once, and returns all three values together.
+    Routes through get_provider() so Massive is used when MASSIVE_API_KEY is set.
     When use_extended=True, S is taken from the extended-hours price so that
     $/shr, theta, and delta all reflect the after/pre-market underlying price.
     """
     _none = {'price': None, 'theta': None, 'delta': None}
     try:
-        from option_lib.yahoo_data import fetch_option_greeks as _fn
-        result = _fn(symbol, expiration_iso, strike, option_type, r=r,
-                     use_extended=use_extended)
+        from option_lib.data_provider import get_provider
+        result = get_provider().fetch_option_greeks(
+            symbol, expiration_iso, strike, option_type, r=r, use_extended=use_extended)
         if all(v is None for v in result.values()):
             _fetch_failures.setdefault(
-                symbol, f"option data unavailable from {_provider}")
+                symbol, f"option data unavailable from {_provider_name()}")
         return result
     except ModuleNotFoundError:
         log.debug("option_lib not available — greeks skipped for %s", symbol)
@@ -145,7 +161,7 @@ def fetch_option_greeks(symbol: str, expiration_iso: str,
         log.warning("fetch_option_greeks(%s %s %s %s) failed: %s",
                     symbol, expiration_iso, strike, option_type, exc)
         _fetch_failures.setdefault(
-            symbol, f"option data unavailable from {_provider} ({type(exc).__name__})")
+            symbol, f"option data unavailable from {_provider_name()} ({type(exc).__name__})")
         return _none
 
 
@@ -154,8 +170,9 @@ def fetch_option_delta(symbol: str, expiration_iso: str,
                        r: float = 0.045) -> float | None:
     """Return probability of assignment (0–1) for the given contract, or None."""
     try:
-        from option_lib.yahoo_data import fetch_option_delta as _fn
-        return _fn(symbol, expiration_iso, strike, option_type, r=r)
+        from option_lib.data_provider import get_provider
+        return get_provider().fetch_option_delta(
+            symbol, expiration_iso, strike, option_type, r)
     except ModuleNotFoundError:
         log.debug("option_lib not available — delta skipped for %s", symbol)
         return None
@@ -163,5 +180,5 @@ def fetch_option_delta(symbol: str, expiration_iso: str,
         log.warning("fetch_option_delta(%s %s %s %s) failed: %s",
                     symbol, expiration_iso, strike, option_type, exc)
         _fetch_failures.setdefault(
-            symbol, f"option data unavailable from {_provider} ({type(exc).__name__})")
+            symbol, f"option data unavailable from {_provider_name()} ({type(exc).__name__})")
         return None

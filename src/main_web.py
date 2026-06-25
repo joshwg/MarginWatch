@@ -431,10 +431,11 @@ def api_price(symbol: str):
     """Debug endpoint — requires MARGIN_DEBUG=1."""
     if not _debug_enabled():
         return jsonify({"error": "not found"}), 404
-    import yfinance as yf
     sym = symbol.upper()
     try:
-        price = yf.Ticker(sym).fast_info.last_price
+        from option_lib.data_provider import get_provider
+        info = get_provider().get_stock_info(sym)
+        price = info.get("current_price") if info.get("success") else None
         return jsonify({"symbol": sym, "price": price})
     except Exception as e:
         return jsonify({"symbol": sym, "price": None, "error": str(e)})
@@ -455,10 +456,10 @@ def api_optprice(symbol: str, expiration: str, strike: str, otype: str):
     except ValueError:
         return jsonify({"error": f"invalid strike: {strike}"}), 400
     try:
-        from option_lib.yahoo_data import (fetch_option_theoretical_price,
-                                            fetch_option_theta)
-        price = fetch_option_theoretical_price(sym, expiration, k, ot)
-        theta = fetch_option_theta(sym, expiration, k, ot)
+        from option_lib.data_provider import get_provider
+        p = get_provider()
+        price = p.fetch_option_theoretical_price(sym, expiration, k, ot)
+        theta = p.fetch_option_theta(sym, expiration, k, ot)
         return jsonify({"symbol": sym, "expiration": expiration,
                         "strike": k, "option_type": ot,
                         "price": price, "theta": theta})
