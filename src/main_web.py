@@ -596,6 +596,9 @@ def api_save_config():
 # Export
 # ---------------------------------------------------------------------------
 
+_EXPORT_HEADERS = ["Position", "Price", "Margin ($k)", "Qty", "Position Theta ($)", "Expiration", "Per-Share Theta"]
+
+
 @app.route("/export")
 def export_page():
     positions = sorted(
@@ -603,9 +606,8 @@ def export_page():
         key=lambda r: (r.symbol, r.expiration or "", r.strike or 0.0),
     )
     _cache.fetch_all(positions)
-    headers = ["Position", "Margin ($k)", "Qty", "Position Theta ($)", "Expiration", "Per-Share Theta"]
     rows = _build_csv_rows(positions)
-    return render_template("export.html", headers=headers, rows=rows)
+    return render_template("export.html", headers=_EXPORT_HEADERS, rows=rows)
 
 
 @app.route("/export/csv")
@@ -617,7 +619,7 @@ def export_csv():
     _cache.fetch_all(positions)
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(["Position", "Margin ($k)", "Qty", "Position Theta ($)", "Expiration", "Per-Share Theta"])
+    writer.writerow(_EXPORT_HEADERS)
     writer.writerows(_build_csv_rows(positions))
     output.seek(0)
     return Response(
@@ -627,19 +629,46 @@ def export_csv():
     )
 
 
+@app.route("/export/xlsx")
+def export_xlsx():
+    from services.export_service import build_workbook
+    import tempfile, os
+    positions = sorted(
+        pos_repo.get_open_positions(),
+        key=lambda r: (r.symbol, r.expiration or "", r.strike or 0.0),
+    )
+    _cache.fetch_all(positions)
+    wb, _ = build_workbook(positions, _cache)
+    with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
+        tmp_path = f.name
+    try:
+        wb.save(tmp_path)
+        with open(tmp_path, "rb") as f:
+            data = f.read()
+    finally:
+        os.unlink(tmp_path)
+    return Response(
+        data,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=positions.xlsx"},
+    )
+
+
 def _build_csv_rows(positions: list) -> list[list]:
     rows = []
     for pos in positions:
+        gf = f'=GOOGLEFINANCE("{pos.symbol}")'
         if ps.is_stock(pos):
             stock_label = f"{pos.symbol} stock ({pos.long_shares or 0} sh)"
             stock_margin = round(ps.margin_k(pos), 2)
             if ps.has_covered_call(pos):
-                rows.append([stock_label, stock_margin, pos.long_shares or 0, "", "", ""])
+                rows.append([stock_label, gf, stock_margin, pos.long_shares or 0, "", "", ""])
                 key = (pos.symbol, pos.expiration, pos.strike, "CALL")
                 raw_theta = _cache.theta(key)
                 theta_dollars = round(-raw_theta * pos.quantity * 100, 2) if raw_theta is not None else ""
                 rows.append([
                     ps.position_abbrev(pos),
+                    gf,
                     0,
                     pos.quantity,
                     theta_dollars,
@@ -647,7 +676,7 @@ def _build_csv_rows(positions: list) -> list[list]:
                     round(raw_theta, 4) if raw_theta is not None else "",
                 ])
             else:
-                rows.append([stock_label, stock_margin, pos.long_shares or 0, "", "", ""])
+                rows.append([stock_label, gf, stock_margin, pos.long_shares or 0, "", "", ""])
         elif ps.is_straddle(pos):
             put_strike = pos.strike2
             call_key = (pos.symbol, pos.expiration, pos.strike,  'CALL')
@@ -656,13 +685,13 @@ def _build_csv_rows(positions: list) -> list[list]:
             put_theta  = _cache.theta(put_key)
             call_abbrev, put_abbrev = ps.straddle_leg_abbrevs(pos)
             rows.append([
-                call_abbrev, round(ps.margin_k(pos), 2), pos.quantity,
+                call_abbrev, gf, round(ps.margin_k(pos), 2), pos.quantity,
                 round(-call_theta * pos.quantity * 100, 2) if call_theta is not None else "",
                 pos.expiration or "",
                 round(call_theta, 4) if call_theta is not None else "",
             ])
             rows.append([
-                put_abbrev, 0, pos.quantity,
+                put_abbrev, gf, 0, pos.quantity,
                 round(-put_theta * pos.quantity * 100, 2) if put_theta is not None else "",
                 pos.expiration or "",
                 round(put_theta, 4) if put_theta is not None else "",
@@ -677,7 +706,7 @@ def _build_csv_rows(positions: list) -> list[list]:
             short_td = round(-short_theta * pos.quantity * 100, 2) if short_theta is not None else ""
             long_td  = round(long_theta  * pos.quantity * 100, 2) if long_theta  is not None else ""
             rows.append([
-                short_abbrev,
+                short_abbrev, gf,
                 round(ps.margin_k(pos), 2),
                 pos.quantity,
                 short_td,
@@ -685,7 +714,7 @@ def _build_csv_rows(positions: list) -> list[list]:
                 round(short_theta, 4) if short_theta is not None else "",
             ])
             rows.append([
-                long_abbrev,
+                long_abbrev, gf,
                 0,
                 pos.quantity,
                 long_td,
@@ -699,6 +728,7 @@ def _build_csv_rows(positions: list) -> list[list]:
             theta_dollars = round(-raw_theta * pos.quantity * 100, 2) if raw_theta is not None else ""
             rows.append([
                 ps.position_abbrev(pos),
+                gf,
                 round(ps.margin_k(pos), 2),
                 pos.quantity,
                 theta_dollars,
@@ -709,4 +739,6 @@ def _build_csv_rows(positions: list) -> list[list]:
 
 
 if __name__ == "__main__":
-    app.run(debug=True, host='0.0.0.0', port=constants.WEB_PORT)
+    # threaded=True lets the dev server handle /api/fetch-progress polls
+    # concurrently while /api/prices is blocking on market-data fetches.
+    app.run(debug=True, host='0.0.0.0', port=constants.WEB_PORT, threaded=True)

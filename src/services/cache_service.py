@@ -43,12 +43,19 @@ class CacheService:
     # ------------------------------------------------------------------
 
     def set_extended_hours(self, value: bool) -> None:
-        """Switch extended-hours mode and clear all cached prices so they re-fetch."""
+        """Switch extended-hours mode and clear all cached market data.
+
+        Prices, option greeks, and the options chain all use S (the stock price)
+        so everything must re-fetch with the new underlying price.
+        """
         if self._use_extended == value:
             return
         self._use_extended = value
         self._price.clear()
         self._price_ts.clear()
+        self._opt_price.clear()
+        self._theta.clear()
+        self._delta.clear()
 
     def invalidate(self, symbol: str) -> None:
         """Drop all cached data for *symbol* so the next fetch is fresh."""
@@ -123,7 +130,7 @@ class CacheService:
                     k = (pos.symbol, pos.expiration, s, ot)
                     if k not in self._theta:
                         self.current_fetch = f"{pos.symbol} options"
-                        g = mds.fetch_option_greeks(pos.symbol, pos.expiration, s, ot, r=self._r)
+                        g = mds.fetch_option_greeks(pos.symbol, pos.expiration, s, ot, r=self._r, use_extended=self._use_extended)
                         self._opt_price[k] = g['price']
                         self._theta[k]     = g['theta']
                         self._delta[k]     = g['delta']
@@ -132,7 +139,7 @@ class CacheService:
             key = (pos.symbol, pos.expiration, pos.strike, ot)
             if key not in self._theta:
                 self.current_fetch = f"{pos.symbol} options"
-                g = mds.fetch_option_greeks(pos.symbol, pos.expiration, pos.strike, ot, r=self._r)
+                g = mds.fetch_option_greeks(pos.symbol, pos.expiration, pos.strike, ot, r=self._r, use_extended=self._use_extended)
                 self._opt_price[key] = g['price']
                 self._theta[key]     = g['theta']
                 self._delta[key]     = g['delta']
@@ -140,7 +147,7 @@ class CacheService:
                 long_key = (pos.symbol, pos.expiration, pos.strike2, ot)
                 if long_key not in self._theta:
                     self.current_fetch = f"{pos.symbol} options"
-                    g = mds.fetch_option_greeks(pos.symbol, pos.expiration, pos.strike2, ot, r=self._r)
+                    g = mds.fetch_option_greeks(pos.symbol, pos.expiration, pos.strike2, ot, r=self._r, use_extended=self._use_extended)
                     self._opt_price[long_key] = g['price']
                     self._theta[long_key]     = g['theta']
                     self._delta[long_key]     = g['delta']

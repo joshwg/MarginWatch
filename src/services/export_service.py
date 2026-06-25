@@ -10,43 +10,44 @@ import services.position_service as ps
 def build_workbook(positions: list[Position], cache: CacheService) -> tuple:
     """Return (workbook, row_count) for the given positions.
 
-    Columns: A=Position  B=Price  C=Margin($k)  D=Qty  E=Position Theta($)  F=Expiration  G=Per-Share Theta
+    Columns: A=Position  B=Margin($k)  C=Qty  D=Position Theta($)  E=Expiration  F=Per-Share Theta
+
+    Note: GOOGLEFINANCE is a Google Sheets-only function and is not included
+    here because it produces errors when the file is opened in Excel.
+    Use the CSV export instead if you need the GOOGLEFINANCE price column.
     """
     import openpyxl
     wb = openpyxl.Workbook()
     ws = wb.active
     assert ws is not None
     ws.title = "Positions"
-    ws.append(["Position", "Price", "Margin ($k)", "Qty", "Position Theta ($)", "Expiration", "Per-Share Theta"])
+    ws.append(["Position", "Margin ($k)", "Qty", "Position Theta ($)", "Expiration", "Per-Share Theta"])
 
     excel_row = 2  # header is row 1; data starts at row 2
     row_count = 0
 
     for pos in positions:
-        gf = f'=GOOGLEFINANCE("{pos.symbol}")'
-
         if ps.is_stock(pos):
             stock_label = f"{pos.symbol} stock ({pos.long_shares or 0} sh)"
             stock_margin = round(ps.margin_k(pos), 2)
             if ps.has_covered_call(pos):
-                ws.append([stock_label, gf, stock_margin, pos.long_shares or 0, 0, 0, ""])
+                ws.append([stock_label, stock_margin, pos.long_shares or 0, 0, 0, ""])
                 excel_row += 1
                 row_count += 1
                 key = (pos.symbol, pos.expiration, pos.strike, "CALL")
                 raw_theta = cache.theta(key)
                 ws.append([
                     ps.position_abbrev(pos),
-                    gf,
                     0,
                     pos.quantity,
-                    f"=-G{excel_row}*D{excel_row}*100" if raw_theta is not None else "",
+                    f"=-F{excel_row}*C{excel_row}*100" if raw_theta is not None else "",
                     pos.expiration or "",
                     round(raw_theta, 4) if raw_theta is not None else "",
                 ])
                 excel_row += 1
                 row_count += 1
             else:
-                ws.append([stock_label, gf, stock_margin, pos.long_shares or 0, 0, 0, ""])
+                ws.append([stock_label, stock_margin, pos.long_shares or 0, 0, 0, ""])
                 excel_row += 1
                 row_count += 1
         elif ps.is_straddle(pos):
@@ -58,10 +59,9 @@ def build_workbook(positions: list[Position], cache: CacheService) -> tuple:
             call_abbrev, put_abbrev = ps.straddle_leg_abbrevs(pos)
             ws.append([
                 call_abbrev,
-                gf,
                 round(ps.margin_k(pos), 2),
                 pos.quantity,
-                f"=-G{excel_row}*D{excel_row}*100" if call_theta is not None else "",
+                f"=-F{excel_row}*C{excel_row}*100" if call_theta is not None else "",
                 pos.expiration or "",
                 round(call_theta, 4) if call_theta is not None else "",
             ])
@@ -69,10 +69,9 @@ def build_workbook(positions: list[Position], cache: CacheService) -> tuple:
             row_count += 1
             ws.append([
                 put_abbrev,
-                gf,
                 0,
                 pos.quantity,
-                f"=-G{excel_row}*D{excel_row}*100" if put_theta is not None else "",
+                f"=-F{excel_row}*C{excel_row}*100" if put_theta is not None else "",
                 pos.expiration or "",
                 round(put_theta, 4) if put_theta is not None else "",
             ])
@@ -87,10 +86,9 @@ def build_workbook(positions: list[Position], cache: CacheService) -> tuple:
             short_abbrev, long_abbrev = ps.spread_leg_abbrevs(pos)
             ws.append([
                 short_abbrev,
-                gf,
                 round(ps.margin_k(pos), 2),
                 pos.quantity,
-                f"=-G{excel_row}*D{excel_row}*100" if short_theta is not None else "",
+                f"=-F{excel_row}*C{excel_row}*100" if short_theta is not None else "",
                 pos.expiration or "",
                 round(short_theta, 4) if short_theta is not None else "",
             ])
@@ -98,10 +96,9 @@ def build_workbook(positions: list[Position], cache: CacheService) -> tuple:
             row_count += 1
             ws.append([
                 long_abbrev,
-                gf,
                 0,
                 pos.quantity,
-                f"=G{excel_row}*D{excel_row}*100" if long_theta is not None else "",
+                f"=F{excel_row}*C{excel_row}*100" if long_theta is not None else "",
                 pos.expiration or "",
                 round(long_theta, 4) if long_theta is not None else "",
             ])
@@ -113,10 +110,9 @@ def build_workbook(positions: list[Position], cache: CacheService) -> tuple:
             raw_theta = cache.theta(key) if pos.strike else None
             ws.append([
                 ps.position_abbrev(pos),
-                gf,
                 round(ps.margin_k(pos), 2),
                 pos.quantity,
-                f"=-G{excel_row}*D{excel_row}*100" if raw_theta is not None else "",
+                f"=-F{excel_row}*C{excel_row}*100" if raw_theta is not None else "",
                 pos.expiration or "",
                 round(raw_theta, 4) if raw_theta is not None else "",
             ])

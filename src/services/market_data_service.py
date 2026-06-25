@@ -120,16 +120,20 @@ def fetch_option_theta(symbol: str, expiration_iso: str,
 
 def fetch_option_greeks(symbol: str, expiration_iso: str,
                         strike: float, option_type: str,
-                        r: float = 0.045) -> dict:
+                        r: float = 0.045,
+                        use_extended: bool = False) -> dict:
     """Return {'price', 'theta', 'delta'} for one contract in a single round-trip.
 
     Replaces three separate fetch_option_* calls: fetches stock info and IV once,
     runs the binomial tree model once, and returns all three values together.
+    When use_extended=True, S is taken from the extended-hours price so that
+    $/shr, theta, and delta all reflect the after/pre-market underlying price.
     """
     _none = {'price': None, 'theta': None, 'delta': None}
     try:
         from option_lib.yahoo_data import fetch_option_greeks as _fn
-        result = _fn(symbol, expiration_iso, strike, option_type, r=r)
+        result = _fn(symbol, expiration_iso, strike, option_type, r=r,
+                     use_extended=use_extended)
         if all(v is None for v in result.values()):
             _fetch_failures.setdefault(
                 symbol, f"option data unavailable from {_provider}")

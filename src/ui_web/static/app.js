@@ -108,6 +108,8 @@ async function loadPositions() {
     renderTable();   // show the table immediately with whatever is cached
 
     // ── Phase 2: live market prices (slow, with progress bar) ────────────────
+    const extChk = document.getElementById('cfgExtHours');
+    if (extChk) extChk.disabled = true;   // prevent mid-fetch toggle
     _startProgressPolling();
     try {
         const resp = await fetch('/api/prices');
@@ -127,9 +129,11 @@ async function loadPositions() {
         console.error('[MarginWatch] price fetch failed:', e);
         _stopProgressPolling();
         _setFetchStatus(`⚠ Price fetch failed: ${e.message || e}`, true);
+        if (extChk) extChk.disabled = false;
         return;
     }
     _stopProgressPolling();
+    if (extChk) extChk.disabled = false;
     renderTable();   // re-render with live prices filled in
 }
 

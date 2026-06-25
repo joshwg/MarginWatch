@@ -17,8 +17,10 @@
 #   python main_web.py                              # Flask dev server (port 5000)
 #
 #   # Production (gunicorn):
+#   # --threads 2 lets /api/fetch-progress polls be served concurrently while
+#   # /api/prices is blocking on market-data fetches (required for status bar).
 #   MARGIN_PWD=yourpassword \
-#     gunicorn --bind 0.0.0.0:5000 main_web:app
+#     gunicorn --bind 0.0.0.0:5000 --threads 2 main_web:app
 #
 set -euo pipefail
 
