@@ -55,20 +55,20 @@ const ICON_PROFIT = '⬆';   // profitable-position indicator
 // highest risk to lowest so the first matching entry wins.
 //
 //  Color    Delta range   Market state
-//  Red      85–100 %      Deep ITM  — assignment almost certain
-//  Orange   65– 84 %      Mod ITM   — high risk, active defence needed
-//  Yellow   45– 64 %      ATM       — coin-flip danger zone
-//  Purple   25– 44 %      Slight OTM — getting uncomfortably close
-//  Blue     10– 24 %      OTM       — comfortable theta-burn zone
-//  Green     0–  9 %      Deep OTM  — practically zero assignment risk
+//  Red      85–100 %      Deep ITM   — assignment almost certain
+//  Orange   65– 84 %      Mod ITM    — high risk, active defence needed
+//  Yellow   45– 64 %      ATM        — coin-flip danger zone
+//  Lime     25– 44 %      Slight OTM — getting uncomfortably close
+//  Green    10– 24 %      OTM        — comfortable theta-burn zone
+//  Blue      0–  9 %      Deep OTM   — practically zero assignment risk
 
 const RISK_BANDS = [
-    { threshold: 0.85, color: '#FF4D4D', label: 'Deep ITM' },  // 🔴 Red
-    { threshold: 0.65, color: '#FF944D', label: 'Mod ITM' },  // 🟠 Orange
-    { threshold: 0.45, color: '#FFD633', label: 'ATM' },  // 🟡 Yellow
-    { threshold: 0.25, color: '#DEFF6E', label: 'Slight OTM' },  // 🟢 Lime
-    { threshold: 0.10, color: '#1AAB5D', label: 'OTM' },  // 🟢 Green
-    { threshold: 0.00, color: '#3498DB', label: 'Deep OTM' },  // 🔵 Blue
+    { threshold: 0.85, color: '#FF4D4D', label: 'Deep ITM'   },  // 🔴 Red
+    { threshold: 0.65, color: '#FF944D', label: 'Mod ITM'    },  // 🟠 Orange
+    { threshold: 0.45, color: '#FFD633', label: 'ATM'        },  // 🟡 Yellow
+    { threshold: 0.25, color: '#DEFF6E', label: 'Slight OTM' },  // 🟡 Lime
+    { threshold: 0.10, color: '#1AAB5D', label: 'OTM'        },  // 🟢 Green
+    { threshold: 0.00, color: '#3498DB', label: 'Deep OTM'   },  // 🔵 Blue
 ];
 
 /**
@@ -80,5 +80,4 @@ function riskColor(delta) {
     for (const band of RISK_BANDS) {
         if (delta >= band.threshold) return band.color;
     }
-    return RISK_BANDS[RISK_BANDS.length - 1].color;
 }

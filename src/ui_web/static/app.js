@@ -84,9 +84,12 @@ document.addEventListener('DOMContentLoaded', async () => {
 async function refreshPrices() {
     const btn = document.getElementById('btnRefresh');
     btn.disabled = true;
-    await fetch('/api/refresh', { method: 'POST' });
-    await loadPositions();
-    btn.disabled = false;
+    try {
+        await fetch('/api/refresh', { method: 'POST' });
+        await loadPositions();
+    } finally {
+        btn.disabled = false;
+    }
 }
 
 async function loadPositions() {
@@ -224,15 +227,16 @@ function renderTable() {
         const { col, dir } = _colSort;
         items.sort((a, b) => {
             let va, vb;
-            if      (col === 'position') { va = a.abbrev;       vb = b.abbrev; }
-            else if (col === 'qty')      { va = a.qty;          vb = b.qty; }
-            else if (col === 'margin')   { va = a.margin;       vb = b.margin; }
-            else if (col === 'opt')      { va = parseFloat(a.opt_str) || -Infinity;
-                                           vb = parseFloat(b.opt_str) || -Infinity; }
+            if      (col === 'position')   { va = a.abbrev;       vb = b.abbrev; }
+            else if (col === 'qty')        { va = a.qty;          vb = b.qty; }
+            else if (col === 'margin')     { va = a.margin;       vb = b.margin; }
+            else if (col === 'opt')        { va = parseFloat(a.opt_str) || -Infinity;
+                                             vb = parseFloat(b.opt_str) || -Infinity; }
             else if (col === 'theta')      { va = a.theta_dollars ?? -Infinity;
                                              vb = b.theta_dollars ?? -Infinity; }
             else if (col === 'theta_norm') { va = a.theta_norm ?? -Infinity;
                                              vb = b.theta_norm ?? -Infinity; }
+            else return 0;  // unknown column — preserve existing order
             if (va < vb) return dir === 'asc' ? -1 : 1;
             if (va > vb) return dir === 'asc' ?  1 : -1;
             return 0;
@@ -545,14 +549,21 @@ async function savePosition(e) {
     };
     const url    = _editId ? `/api/positions/${_editId}` : '/api/positions';
     const method = _editId ? 'PUT' : 'POST';
-    const resp = await fetch(url, {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data),
-    });
-    if (resp.ok) {
-        _posModal.hide();
-        loadPositions();
+    try {
+        const resp = await fetch(url, {
+            method,
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        });
+        if (resp.ok) {
+            _posModal.hide();
+            loadPositions();
+        } else {
+            const body = await resp.json().catch(() => ({}));
+            alert(`Save failed: ${body.error || `server returned ${resp.status}`}`);
+        }
+    } catch (err) {
+        alert(`Save failed: ${err.message}`);
     }
 }
 
@@ -656,7 +667,11 @@ function buildLegend() {
 // Confirm dialog
 // ---------------------------------------------------------------------------
 
+let _confirmOpen = false;   // guard against re-entrant calls
+
 function confirmDialog(msg) {
+    if (_confirmOpen) return Promise.resolve(false);
+    _confirmOpen = true;
     return new Promise(resolve => {
         document.getElementById('confirmMsg').textContent = msg;
         const modalEl = document.getElementById('confirmModal');
@@ -669,6 +684,7 @@ function confirmDialog(msg) {
         }, { once: true });
 
         modalEl.addEventListener('hidden.bs.modal', () => {
+            _confirmOpen = false;
             if (!decided) resolve(false);
         }, { once: true });
 
