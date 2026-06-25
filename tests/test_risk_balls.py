@@ -31,12 +31,12 @@ from services.cache_service import CacheService
 # ---------------------------------------------------------------------------
 
 RISK_BANDS = [
-    (0.85, "#dc2626", "🔴 Red    — Deep ITM   (≥ 85%)"),
-    (0.65, "#ea580c", "🟠 Orange — Mod ITM    (≥ 65%)"),
-    (0.45, "#ca8a04", "🟡 Yellow — ATM        (≥ 45%)"),
-    (0.25, "#7c3aed", "🟣 Purple — Slight OTM (≥ 25%)"),
-    (0.10, "#2563eb", "🔵 Blue   — OTM        (≥ 10%)"),
-    (0.00, "#16a34a", "🟢 Green  — Deep OTM   ( < 10%)"),
+    (0.85, "#FF4D4D", "🔴 Red    — Deep ITM   (≥ 85%)"),
+    (0.65, "#FF944D", "🟠 Orange — Mod ITM    (≥ 65%)"),
+    (0.45, "#FFD633", "🟡 Yellow — ATM        (≥ 45%)"),
+    (0.25, "#DEFF6E", "🟢 Lime   — Slight OTM (≥ 25%)"),
+    (0.10, "#1AAB5D", "🟢 Green  — OTM        (≥ 10%)"),
+    (0.00, "#3498DB", "🔵 Blue   — Deep OTM   ( < 10%)"),
 ]
 
 
@@ -173,23 +173,23 @@ def test_display_cache_miss_gives_none():
 def test_risk_color_bands():
     cases = [
         # (delta, expected_hex, description)
-        (0.95, "#dc2626", "Deep ITM   → Red"),
-        (0.85, "#dc2626", "Deep ITM boundary → Red"),
-        (0.84, "#ea580c", "just below 85% → Orange"),
-        (0.70, "#ea580c", "Mod ITM    → Orange"),
-        (0.65, "#ea580c", "Mod ITM boundary → Orange"),
-        (0.64, "#ca8a04", "just below 65% → Yellow"),
-        (0.50, "#ca8a04", "ATM        → Yellow"),
-        (0.45, "#ca8a04", "ATM boundary → Yellow"),
-        (0.44, "#7c3aed", "just below 45% → Purple"),
-        (0.30, "#7c3aed", "Slight OTM → Purple"),
-        (0.25, "#7c3aed", "Slight OTM boundary → Purple"),
-        (0.24, "#2563eb", "just below 25% → Blue"),
-        (0.15, "#2563eb", "OTM        → Blue"),
-        (0.10, "#2563eb", "OTM boundary → Blue"),
-        (0.09, "#16a34a", "just below 10% → Green"),
-        (0.05, "#16a34a", "Deep OTM   → Green"),
-        (0.00, "#16a34a", "Zero delta → Green"),
+        (0.95, "#FF4D4D", "Deep ITM   → Red"),
+        (0.85, "#FF4D4D", "Deep ITM boundary → Red"),
+        (0.84, "#FF944D", "just below 85% → Orange"),
+        (0.70, "#FF944D", "Mod ITM    → Orange"),
+        (0.65, "#FF944D", "Mod ITM boundary → Orange"),
+        (0.64, "#FFD633", "just below 65% → Yellow"),
+        (0.50, "#FFD633", "ATM        → Yellow"),
+        (0.45, "#FFD633", "ATM boundary → Yellow"),
+        (0.44, "#DEFF6E", "just below 45% → Lime"),
+        (0.30, "#DEFF6E", "Slight OTM → Lime"),
+        (0.25, "#DEFF6E", "Slight OTM boundary → Lime"),
+        (0.24, "#1AAB5D", "just below 25% → Green"),
+        (0.15, "#1AAB5D", "OTM        → Green"),
+        (0.10, "#1AAB5D", "OTM boundary → Green"),
+        (0.09, "#3498DB", "just below 10% → Blue"),
+        (0.05, "#3498DB", "Deep OTM   → Blue"),
+        (0.00, "#3498DB", "Zero delta → Blue"),
     ]
     failures = []
     for delta, expected, label in cases:

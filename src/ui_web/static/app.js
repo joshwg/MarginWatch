@@ -276,9 +276,10 @@ function renderTable() {
             const barelyItm = pos.itm_amount != null && pos.strike != null &&
                               (pos.itm_amount < 1.0 || pos.itm_amount < 0.03 * pos.strike);
             dot.style.backgroundColor = barelyItm
-                ? '#ca8a04'
+                ? '#FACC15'
                 : pos.is_stock_row ? COLOR_ITM_GOOD : COLOR_ITM_BAD;
-            dot.textContent = 'i';
+            dot.style.color = barelyItm ? '#000' : '#fff';
+            dot.textContent = 'I';
             dot.title = pos.itm_amount != null
                 ? `ITM $${pos.itm_amount.toFixed(2)}`
                 : 'In the money';

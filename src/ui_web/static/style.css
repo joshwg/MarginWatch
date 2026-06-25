@@ -67,8 +67,9 @@
 .mw-ind-itm {
   font-size: 7px;
   font-weight: bold;
-  font-family: sans-serif;
+  font-family: serif;
   color: #fff;
+  border-radius: 0;
 }
 /* Risk legend */
 .mw-legend { display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; align-items: center; }

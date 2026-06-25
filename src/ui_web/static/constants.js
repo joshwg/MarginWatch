@@ -10,18 +10,18 @@
 const COLOR_ITM_GOOD = '#16a34a';
 
 /** ITM indicator: put/call/spread ITM is bad (short option losing) */
-const COLOR_ITM_BAD  = '#dc2626';
+const COLOR_ITM_BAD = '#dc2626';
 
 // ── Timing (ms) ──────────────────────────────────────────────────────────────
 
 /** Hover dwell time before the price tooltip appears */
-const HOVER_DELAY_MS       = 500;
+const HOVER_DELAY_MS = 500;
 
 /** Touch hold time before the price tooltip appears */
-const LONGPRESS_DELAY_MS   = 500;
+const LONGPRESS_DELAY_MS = 500;
 
 /** How long the price tooltip stays visible after a touch */
-const TOOLTIP_DISMISS_MS   = 3000;
+const TOOLTIP_DISMISS_MS = 3000;
 
 /** How long the "Saved" confirmation message stays visible */
 const SAVED_MSG_DISMISS_MS = 3000;
@@ -44,9 +44,9 @@ const TOOLTIP_EDGE_GAP = 8;
 
 // ── Icons / glyphs ───────────────────────────────────────────────────────────
 
-const ICON_EDIT   = '✎';   // row edit button
+const ICON_EDIT = '✎';   // row edit button
 const ICON_DELETE = '✕';   // row delete button
-const ICON_MERGE  = '⊕';   // row merge button
+const ICON_MERGE = '⊕';   // row merge button
 const ICON_PROFIT = '⬆';   // profitable-position indicator
 
 // ── Risk / probability-of-assignment spectrum ─────────────────────────────────
@@ -63,12 +63,12 @@ const ICON_PROFIT = '⬆';   // profitable-position indicator
 //  Green     0–  9 %      Deep OTM  — practically zero assignment risk
 
 const RISK_BANDS = [
-    { threshold: 0.85, color: '#dc2626', label: 'Deep ITM'   },  // 🔴 Red
-    { threshold: 0.65, color: '#ea580c', label: 'Mod ITM'    },  // 🟠 Orange
-    { threshold: 0.45, color: '#ca8a04', label: 'ATM'        },  // 🟡 Yellow
-    { threshold: 0.25, color: '#7c3aed', label: 'Slight OTM' },  // 🟣 Purple
-    { threshold: 0.10, color: '#2563eb', label: 'OTM'        },  // 🔵 Blue
-    { threshold: 0.00, color: '#16a34a', label: 'Deep OTM'   },  // 🟢 Green
+    { threshold: 0.85, color: '#FF4D4D', label: 'Deep ITM' },  // 🔴 Red
+    { threshold: 0.65, color: '#FF944D', label: 'Mod ITM' },  // 🟠 Orange
+    { threshold: 0.45, color: '#FFD633', label: 'ATM' },  // 🟡 Yellow
+    { threshold: 0.25, color: '#DEFF6E', label: 'Slight OTM' },  // 🟢 Lime
+    { threshold: 0.10, color: '#1AAB5D', label: 'OTM' },  // 🟢 Green
+    { threshold: 0.00, color: '#3498DB', label: 'Deep OTM' },  // 🔵 Blue
 ];
 
 /**
