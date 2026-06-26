@@ -67,7 +67,7 @@
   <div id="fetchErrorBanner" class="alert alert-warning alert-dismissible fade show py-2 mb-2 d-none" role="alert">
     <strong>⚠ Data fetch error</strong> — some market data could not be retrieved. Prices shown as&nbsp;— may be stale.
     <ul id="fetchErrorList" class="mb-0 mt-1 small"></ul>
-    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    <button type="button" class="btn-close" id="fetchErrorDismiss" aria-label="Close"></button>
   </div>
 
   <!-- Live fetch-progress status line -->
@@ -99,21 +99,21 @@
     <div class="card-body py-2">
       <div class="row g-2 align-items-center">
         <div class="col-auto">
-          <label class="col-form-label col-form-label-sm">Max Margin ($1k steps):</label>
+          <label for="cfgMargin" class="col-form-label col-form-label-sm">Max Margin ($1k steps):</label>
         </div>
         <div class="col-auto">
           <input type="number" class="form-control form-control-sm" id="cfgMargin"
                  step="1000" min="0" max="10000000" style="width:110px">
         </div>
         <div class="col-auto">
-          <label class="col-form-label col-form-label-sm">Multiplier (0.5–4.0):</label>
+          <label for="cfgMultiplier" class="col-form-label col-form-label-sm">Multiplier (0.5–4.0):</label>
         </div>
         <div class="col-auto">
           <input type="number" class="form-control form-control-sm" id="cfgMultiplier"
                  step="0.1" min="0.5" max="4.0" style="width:72px">
         </div>
         <div class="col-auto">
-          <label class="col-form-label col-form-label-sm">Risk-Free Rate (%):</label>
+          <label for="cfgRiskFree" class="col-form-label col-form-label-sm">Risk-Free Rate (%):</label>
         </div>
         <div class="col-auto">
           <input type="number" class="form-control form-control-sm" id="cfgRiskFree"
@@ -148,13 +148,13 @@
       <div class="modal-body py-2">
         <form id="positionForm">
           <div class="row mb-2 align-items-center">
-            <label class="col-4 col-form-label col-form-label-sm">Symbol</label>
+            <label for="fSymbol" class="col-4 col-form-label col-form-label-sm">Symbol</label>
             <div class="col-8">
               <input type="text" class="form-control form-control-sm" id="fSymbol" required>
             </div>
           </div>
           <div class="row mb-2 align-items-center">
-            <label class="col-4 col-form-label col-form-label-sm">Type</label>
+            <label for="fType" class="col-4 col-form-label col-form-label-sm">Type</label>
             <div class="col-8">
               <select class="form-select form-select-sm" id="fType">
                 <option value="CALL">CALL</option>
@@ -167,41 +167,41 @@
             </div>
           </div>
           <div class="row mb-2 align-items-center" id="rowExpiration">
-            <label class="col-4 col-form-label col-form-label-sm">Expiration</label>
+            <label for="fExpiration" class="col-4 col-form-label col-form-label-sm">Expiration</label>
             <div class="col-8">
               <input type="date" class="form-control form-control-sm" id="fExpiration">
             </div>
           </div>
           <div class="row mb-2 align-items-center" id="rowStrike">
-            <label class="col-4 col-form-label col-form-label-sm" id="strikeLabel">Strike</label>
+            <label for="fStrike" class="col-4 col-form-label col-form-label-sm" id="strikeLabel">Strike</label>
             <div class="col-8">
               <input type="number" class="form-control form-control-sm" id="fStrike"
                      step="0.5" min="0">
             </div>
           </div>
           <div class="row mb-2 align-items-center" id="rowStrike2">
-            <label class="col-4 col-form-label col-form-label-sm" id="strike2Label">Strike 2</label>
+            <label for="fStrike2" class="col-4 col-form-label col-form-label-sm" id="strike2Label">Strike 2</label>
             <div class="col-8">
               <input type="number" class="form-control form-control-sm" id="fStrike2"
                      step="0.5" min="0">
             </div>
           </div>
           <div class="row mb-2 align-items-center">
-            <label class="col-4 col-form-label col-form-label-sm" id="qtyLabel">Contracts</label>
+            <label for="fQty" class="col-4 col-form-label col-form-label-sm" id="qtyLabel">Contracts</label>
             <div class="col-8">
               <input type="number" class="form-control form-control-sm" id="fQty"
                      min="1" step="1" value="1">
             </div>
           </div>
           <div class="row mb-2 align-items-center d-none" id="rowShares">
-            <label class="col-4 col-form-label col-form-label-sm">Long Shares</label>
+            <label for="fShares" class="col-4 col-form-label col-form-label-sm">Long Shares</label>
             <div class="col-8">
               <input type="number" class="form-control form-control-sm" id="fShares"
                      min="0" step="1">
             </div>
           </div>
           <div class="row mb-2 align-items-center d-none" id="rowCost">
-            <label class="col-4 col-form-label col-form-label-sm">Long Cost</label>
+            <label for="fCost" class="col-4 col-form-label col-form-label-sm">Long Cost</label>
             <div class="col-8">
               <input type="number" class="form-control form-control-sm" id="fCost"
                      step="0.01" min="0">

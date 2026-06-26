@@ -69,6 +69,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         loadPositions();
     });
 
+    document.getElementById('fetchErrorDismiss').addEventListener('click', () => {
+        const banner = document.getElementById('fetchErrorBanner');
+        banner.classList.add('d-none');
+        document.getElementById('fetchErrorList').innerHTML = '';
+    });
+
     document.getElementById('btnAdd').addEventListener('click', openAddModal);
     document.getElementById('btnRefresh').addEventListener('click', refreshPrices);
     document.getElementById('btnSaveConfig').addEventListener('click', saveConfig);
@@ -190,17 +196,13 @@ function _setFetchStatus(msg, isError = false) {
 function showFetchErrors(errors) {
     const banner = document.getElementById('fetchErrorBanner');
     const list   = document.getElementById('fetchErrorList');
+    if (!banner || !list) return;
     if (!errors.length) {
         banner.classList.add('d-none');
         return;
     }
     list.innerHTML = errors.map(e => `<li>${e}</li>`).join('');
-    // Re-show the banner even if the user previously dismissed it, since
-    // the errors may have changed after a refresh.
     banner.classList.remove('d-none');
-    // Bootstrap may have removed 'show' on dismiss — restore it so the
-    // alert is visible without needing a fade-in trigger.
-    if (!banner.classList.contains('show')) banner.classList.add('show');
 }
 
 async function loadConfig() {
