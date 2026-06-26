@@ -5,7 +5,8 @@ let _colSort = null;   // { col: string, dir: 'asc'|'desc' } | null
 let _editId = null;    // null = adding new, number = editing existing
 let _posModal = null;
 let _confirmModal = null;
-let _progressPoller = null;  // interval handle for fetch-progress polling
+let _progressPoller = null;    // interval handle for fetch-progress polling
+let _pricesFetchCtrl = null;  // AbortController for the in-flight /api/prices request
 
 // ---------------------------------------------------------------------------
 // Init
@@ -95,13 +96,24 @@ async function refreshPrices() {
 async function loadPositions() {
     const sort = document.querySelector('input[name="sort"]:checked').value;
 
+    // Cancel any in-flight /api/prices from a previous loadPositions() call so
+    // it cannot race against this one — stale phase-2 results stomping on the
+    // new sort order are the most common cause of "sort doesn't stick".
+    if (_pricesFetchCtrl) {
+        _pricesFetchCtrl.abort();
+        _pricesFetchCtrl = null;
+        _stopProgressPolling();
+        const extChkPrev = document.getElementById('cfgExtHours');
+        if (extChkPrev) extChkPrev.disabled = false;
+    }
+
     // ── Phase 1: positions from the database (fast) ──────────────────────────
     try {
         const resp = await fetch(`/api/positions?sort=${sort}`);
         if (resp.status === 401) { location.href = '/login'; return; }
         const data = await resp.json();
-        _positions = data.positions;
-        updateSummary(data.summary);
+        _positions = data.positions || [];   // guard: never assign undefined
+        if (data.summary) updateSummary(data.summary);
         showFetchErrors(data.fetch_errors || []);
     } catch (e) {
         console.error('[MarginWatch] loadPositions failed:', e);
@@ -113,9 +125,11 @@ async function loadPositions() {
     // ── Phase 2: live market prices (slow, with progress bar) ────────────────
     const extChk = document.getElementById('cfgExtHours');
     if (extChk) extChk.disabled = true;   // prevent mid-fetch toggle
+    _pricesFetchCtrl = new AbortController();
     _startProgressPolling();
     try {
-        const resp = await fetch('/api/prices');
+        const resp = await fetch('/api/prices', { signal: _pricesFetchCtrl.signal });
+        _pricesFetchCtrl = null;
         if (resp.status === 401) { _stopProgressPolling(); location.href = '/login'; return; }
         const data = await resp.json();
         // Merge price-dependent fields into the existing position objects.
@@ -129,6 +143,8 @@ async function loadPositions() {
             sumEl.textContent = `$${data.total_theta.toLocaleString()}/d`;
         showFetchErrors(data.fetch_errors || []);
     } catch (e) {
+        _pricesFetchCtrl = null;
+        if (e.name === 'AbortError') return;  // superseded by a newer loadPositions() — silent
         console.error('[MarginWatch] price fetch failed:', e);
         _stopProgressPolling();
         _setFetchStatus(`⚠ Price fetch failed: ${e.message || e}`, true);

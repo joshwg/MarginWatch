@@ -293,7 +293,10 @@ class MarginWatchApp(tk.Tk):
         threading.Thread(target=self._bg_fetch, args=(positions,), daemon=True).start()
 
     def _bg_fetch(self, positions):
-        self._cache.fetch_all(positions)
+        try:
+            self._cache.fetch_all(positions)
+        except Exception:
+            pass   # errors logged inside fetch_all; don't leave _refreshing=True forever
         self.after(0, lambda: self._finish_refresh(positions))
 
     def _finish_refresh(self, positions):

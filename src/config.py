@@ -8,7 +8,7 @@ Format: one NAME=VALUE pair per line; blank lines and lines starting with
 from pathlib import Path
 from typing import Any
 
-DATA_DIR    = Path("../data")
+DATA_DIR    = Path(__file__).parent.parent / "data"
 CONFIG_FILE = DATA_DIR / "marginwatch.cfg"
 
 DEFAULTS: dict[str, Any] = {
