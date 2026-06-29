@@ -5,8 +5,8 @@
 .mw-summary { min-width: 105px; }
 .mw-val { min-width: 58px; display: inline-block; text-align: right; }
 
-/* Table scroll container — height adapts to viewport */
-.mw-table-wrap { max-height: calc(100dvh - 220px); min-height: 200px; overflow-y: auto; overflow-x: auto; }
+/* Table scroll container — fixed height */
+.mw-table-wrap { height: 1000px; min-height: 200px; overflow-y: auto; overflow-x: auto; }
 
 /* Top bar wraps on narrow screens so buttons drop to a second line */
 .mw-top-bar { flex-wrap: wrap; }

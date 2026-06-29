@@ -73,6 +73,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const banner = document.getElementById('fetchErrorBanner');
         banner.classList.add('d-none');
         document.getElementById('fetchErrorList').innerHTML = '';
+        fetch('/api/clear-errors', { method: 'POST' });   // stop re-reporting on next load
     });
 
     document.getElementById('btnAdd').addEventListener('click', openAddModal);

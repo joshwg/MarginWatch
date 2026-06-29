@@ -481,6 +481,13 @@ def api_refresh():
     return jsonify({"ok": True})
 
 
+@app.route("/api/clear-errors", methods=["POST"])
+def api_clear_errors():
+    """Clear accumulated fetch errors so they stop appearing after the user dismisses them."""
+    _cache._failed.clear()
+    return jsonify({"ok": True})
+
+
 @app.route("/api/positions/merge", methods=["POST"])
 def api_merge_positions():
     d = request.json
