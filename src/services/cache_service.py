@@ -10,6 +10,11 @@ import services.position_service as ps
 
 _PRICE_TTL = 600.0  # seconds before a cached stock price is considered stale
 
+# Theta clipping: caps the raw per-share, per-day theta returned by cache.theta()
+# to guard against blow-ups when pricing data is degenerate.
+_THETA_ABS_MAX       = 1_000_000.0  # hard upper bound regardless of option type
+_THETA_CALL_STRIKE_MULT = 2.0       # CALL cap = this × strike
+
 
 class CacheService:
     """Holds per-symbol price and per-contract option data for the current session.
@@ -33,6 +38,7 @@ class CacheService:
         self._opt_price: dict[tuple, float | None] = {}
         self._theta: dict[tuple, float | None] = {}
         self._delta: dict[tuple, float | None] = {}
+        self._earnings: dict[str, str | None] = {}
         # symbol → short error description; persists until cache is reset
         self._failed: dict[str, str] = {}
         # Human-readable status of the in-progress fetch ("AAPL", "TSLA options", …)
@@ -64,6 +70,7 @@ class CacheService:
         self._opt_price = {k: v for k, v in self._opt_price.items() if k[0] != symbol}
         self._theta     = {k: v for k, v in self._theta.items()     if k[0] != symbol}
         self._delta     = {k: v for k, v in self._delta.items()     if k[0] != symbol}
+        self._earnings.pop(symbol, None)
 
     def fetch_all(self, positions: list[Position]) -> None:
         """Fetch any missing prices and greeks for all positions."""
@@ -97,10 +104,31 @@ class CacheService:
         return self._opt_price.get(key)
 
     def theta(self, key: tuple) -> float | None:
-        return self._theta.get(key)
+        val = self._theta.get(key)
+        if val is None:
+            return None
+        symbol, _exp, strike, option_type = key
+        # Clip degenerate theta values (blow-ups when pricing data is unavailable).
+        # Theta (per share, per day) physically can't exceed the option's max value:
+        #   PUT  → capped at the underlier price (a put can never be worth more than S)
+        #   CALL → capped at twice the strike (generous but bounded upper limit)
+        # A hard 1,000,000 limit also guards against any remaining edge cases.
+        if option_type == 'PUT':
+            stock_price = self._price.get(symbol)
+            cap = min(_THETA_ABS_MAX, stock_price) if stock_price is not None else _THETA_ABS_MAX
+        else:  # CALL
+            cap = min(_THETA_ABS_MAX, _THETA_CALL_STRIKE_MULT * strike) if strike is not None else _THETA_ABS_MAX
+        if val < -cap:
+            val = -cap
+        elif val > cap:
+            val = cap
+        return val
 
     def delta(self, key: tuple) -> float | None:
         return self._delta.get(key)
+
+    def earnings_date(self, symbol: str) -> str | None:
+        return self._earnings.get(symbol)
 
     # ------------------------------------------------------------------
     # Private fetchers
@@ -110,6 +138,8 @@ class CacheService:
         for sym in {p.symbol for p in positions}:
             self.current_fetch = sym
             self.fetch_price(sym)
+            if sym not in self._earnings:
+                self._earnings[sym] = mds.fetch_earnings_date(sym)
         self.current_fetch = ""
 
     def _fetch_greeks(self, positions: list[Position]) -> None:

@@ -47,6 +47,44 @@ document.addEventListener('DOMContentLoaded', async () => {
         this.setSelectionRange(pos, pos);
     });
 
+    document.getElementById('fSymbol').addEventListener('blur', async function () {
+        if (_editId !== null) return;
+        const ot = document.getElementById('fType').value;
+        if (ot === 'STOCK') return;
+        const sym = this.value.trim().toUpperCase();
+        if (!sym) return;
+        const strikeEl = document.getElementById('fStrike');
+        if (strikeEl.value && parseFloat(strikeEl.value) !== 0) return;
+        try {
+            const resp = await fetch(`/api/quote/${sym}`);
+            if (!resp.ok) return;
+            const data = await resp.json();
+            if (data.price) strikeEl.value = Math.round(data.price * 0.97);
+        } catch (_) { /* ignore fetch errors */ }
+    });
+
+    document.getElementById('fStrike').addEventListener('keydown', function (e) {
+        if (e.key !== '-' && e.key !== '=') return;
+        e.preventDefault();
+        const val = parseFloat(this.value) || 0;
+        this.value = Math.max(0, val + (e.key === '=' ? 1 : -1));
+    });
+
+    document.getElementById('fQty').addEventListener('keydown', function (e) {
+        if (e.key !== '-' && e.key !== '=') return;
+        e.preventDefault();
+        const val = parseInt(this.value) || 1;
+        this.value = Math.max(1, val + (e.key === '=' ? 1 : -1));
+    });
+
+    document.getElementById('fShares').addEventListener('keydown', function (e) {
+        if (e.key !== '-' && e.key !== '=' && e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+        e.preventDefault();
+        const val = parseInt(this.value) || 0;
+        const delta = (e.key === '=' || e.key === 'ArrowUp') ? 100 : -100;
+        this.value = Math.max(0, val + delta);
+    });
+
     document.getElementById('fExpiration').addEventListener('keydown', function (e) {
         if (e.key !== '-' && e.key !== '=') return;
         e.preventDefault();
@@ -54,6 +92,20 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (isNaN(d)) return;
         d.setDate(d.getDate() + (e.key === '=' ? 1 : -1));
         this.value = d.toISOString().slice(0, 10);
+    });
+
+    document.getElementById('fExpiration').addEventListener('change', function () {
+        if (document.getElementById('fType').value !== 'STOCK') return;
+        if (!this.value) return;
+        // Quantity = shares ÷ 100 (contracts to cover the position)
+        const shares = parseInt(document.getElementById('fShares').value) || 0;
+        if (shares > 0) document.getElementById('fQty').value = Math.round(shares / 100);
+        // Strike = nearest dollar at or above long cost (covered call default)
+        const strikeEl = document.getElementById('fStrike');
+        if (!strikeEl.value || parseFloat(strikeEl.value) === 0) {
+            const cost = parseFloat(document.getElementById('fCost').value) || 0;
+            if (cost > 0) strikeEl.value = Math.ceil(cost);
+        }
     });
 
     document.getElementById('confirmModal').addEventListener('hide.bs.modal', () => {
@@ -329,6 +381,13 @@ function renderTable() {
             arrow.textContent = ICON_PROFIT;
             posCell.appendChild(arrow);
         }
+        if (pos.after_earnings) {
+            const edot = document.createElement('span');
+            edot.className = 'mw-ind mw-ind-earn';
+            edot.textContent = 'E';
+            edot.title = 'Option expires after earnings';
+            posCell.appendChild(edot);
+        }
         const nameSpan = document.createElement('span');
         nameSpan.textContent = pos.abbrev;
         if (pos.is_stock_row) nameSpan.className = 'mw-stock-pos';
@@ -508,8 +567,11 @@ async function saveConfig() {
 
 function nextOptionFriday() {
     const today = new Date();
-    const d = today.getDay(); // 0=Sun … 5=Fri, 6=Sat
-    const days = d === 5 ? 7 : d === 6 ? 6 : 5 - d;
+    const d = today.getDay(); // 0=Sun, 1=Mon … 5=Fri, 6=Sat
+    // Default to *next* week's Friday: Mon–Thu skip an extra week so the form
+    // never opens on the current week's expiry. Fri/Sat already land on next
+    // Friday; Sun is 5 days out (next week).
+    const days = d === 5 ? 7 : d === 6 ? 6 : d === 0 ? 5 : (5 - d) + 7;
     const result = new Date(today);
     result.setDate(today.getDate() + days);
     return result.toISOString().slice(0, 10);
@@ -632,7 +694,8 @@ function applyAssigned() {
     document.getElementById('fType').value      = 'STOCK';
     document.getElementById('fShares').value    = qty * 100;
     document.getElementById('fCost').value      = strike.toFixed(2);
-    document.getElementById('fStrike').value    = '';
+    document.getElementById('fStrike').value     = '';
+    document.getElementById('fStrike2').value    = '';
     document.getElementById('fExpiration').value = '';
     document.getElementById('btnAssigned').classList.add('d-none');
     document.getElementById('btnClearCover').classList.add('d-none');

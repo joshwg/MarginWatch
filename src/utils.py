@@ -20,15 +20,22 @@ try:
     from option_lib.math_util import next_option_friday
 except ModuleNotFoundError:
     def next_option_friday() -> date:  # type: ignore[misc]
-        """Fallback when option_lib is not installed."""
+        """Fallback when option_lib is not installed.
+
+        Returns the Friday of *next* calendar week.
+        Mon–Thu jump an extra week so the default is never the current week's expiry.
+        Fri/Sat already land on next Friday naturally; Sun is 5 days out (next week).
+        """
         today = date.today()
-        wd = today.weekday()
-        if wd == 4:
+        wd = today.weekday()  # Mon=0 … Sun=6
+        if wd == 4:    # Friday   → next Friday
             days = 7
-        elif wd == 5:
+        elif wd == 5:  # Saturday → next Friday
             days = 6
-        else:
-            days = (4 - wd) % 7
+        elif wd == 6:  # Sunday   → next Friday (already next week, 5 days)
+            days = 5
+        else:          # Mon–Thu  → next week's Friday (skip this week)
+            days = 4 - wd + 7
         return today + timedelta(days=days)
 
 def parse_float(value, default=0.0):

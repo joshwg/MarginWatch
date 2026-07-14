@@ -165,6 +165,18 @@ def fetch_option_greeks(symbol: str, expiration_iso: str,
         return _none
 
 
+def fetch_earnings_date(symbol: str) -> str | None:
+    """Return the next upcoming earnings date as 'YYYY-MM-DD', or None."""
+    try:
+        from option_lib.data_provider import get_provider
+        return get_provider().get_earnings_date(symbol)
+    except ModuleNotFoundError:
+        return None
+    except Exception as exc:
+        log.warning("fetch_earnings_date(%s) failed: %s", symbol, exc)
+        return None
+
+
 def fetch_option_delta(symbol: str, expiration_iso: str,
                        strike: float, option_type: str,
                        r: float = 0.045) -> float | None:

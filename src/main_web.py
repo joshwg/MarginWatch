@@ -15,7 +15,7 @@ import io
 import logging
 import os
 import threading
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 logging.basicConfig(
     level=logging.WARNING,
@@ -132,6 +132,16 @@ def _compute_display(pos: Position, cache: CacheService) -> dict:
 
     days = ps.days_to_expiry(pos)
     bg = styles.expiry_color(days)
+
+    earnings = cache.earnings_date(pos.symbol)
+    after_earnings = False
+    if earnings and pos.expiration and pos.expiration != constants.NO_EXPIRATION:
+        try:
+            today = date.today()
+            after_earnings = today < date.fromisoformat(earnings) <= date.fromisoformat(pos.expiration)
+        except ValueError:
+            pass
+
     return {
         "abbrev": abbrev,
         "abbrev2": abbrev2,
@@ -147,6 +157,7 @@ def _compute_display(pos: Position, cache: CacheService) -> dict:
         "is_stock_row": ps.is_stock(pos),
         "is_profitable": ps.is_profitable(pos, price),
         "delta": round(delta, 3) if delta is not None else None,
+        "after_earnings": after_earnings,
     }
 
 
@@ -369,6 +380,7 @@ def api_positions():
             "is_stock_row": display["is_stock_row"],
             "is_profitable": display["is_profitable"],
             "delta": display["delta"],
+            "after_earnings": display["after_earnings"],
             "show_merge": show_merge,
             "merge_key": list(merge_key),
         })
@@ -415,8 +427,9 @@ def api_prices():
             "theta_dollars": display["theta_dollars"],
             "theta_norm":    round(display["theta_dollars"] / display["margin"] * 10, 1)
                              if display["theta_dollars"] is not None and display["margin"] else None,
-            "is_profitable": display["is_profitable"],
-            "delta":         display["delta"],
+            "is_profitable":  display["is_profitable"],
+            "delta":          display["delta"],
+            "after_earnings": display["after_earnings"],
         }
 
     return jsonify({
@@ -424,6 +437,14 @@ def api_prices():
         "total_theta": round(total_theta_day),
         "fetch_errors": _cache.fetch_errors(),
     })
+
+
+@app.route("/api/quote/<symbol>")
+def api_quote(symbol: str):
+    """Return the cached (or freshly fetched) stock price for use in the add-position form."""
+    sym = symbol.strip().upper()
+    price = _cache.fetch_price(sym)
+    return jsonify({"symbol": sym, "price": price})
 
 
 @app.route("/api/price/<symbol>")

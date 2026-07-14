@@ -71,6 +71,14 @@
   color: #fff;
   border-radius: 0;
 }
+.mw-ind-earn {
+  font-size: 7px;
+  font-weight: bold;
+  font-family: serif;
+  color: #fff;
+  border-radius: 0;
+  background-color: #F97316;
+}
 /* Risk legend */
 .mw-legend { display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; align-items: center; }
 .mw-legend-item { display: flex; align-items: center; gap: 4px; font-size: 0.78rem; }
