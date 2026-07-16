@@ -358,15 +358,6 @@ function renderTable() {
             dot.title = pos.itm_amount != null
                 ? `ITM $${pos.itm_amount.toFixed(2)}`
                 : 'In the money';
-            // When the cursor enters the ITM ball, cancel any pending row hover
-            // timer and hide any already-visible price tooltip so only the
-            // native title tooltip (ITM amount) appears.
-            dot.addEventListener('mouseenter', e => {
-                e.stopPropagation();
-                if (_hoverTimer) { clearTimeout(_hoverTimer); _hoverTimer = null; }
-                hideTooltip();
-            });
-            dot.addEventListener('mouseleave', e => e.stopPropagation());
             posCell.appendChild(dot);
             if (pos.itm_amount != null) {
                 const lbl = document.createElement('span');
@@ -385,7 +376,12 @@ function renderTable() {
             const edot = document.createElement('span');
             edot.className = 'mw-ind mw-ind-earn';
             edot.textContent = 'E';
-            edot.title = 'Option expires after earnings';
+            if (pos.earnings_date) {
+                const [, m, d] = pos.earnings_date.split('-');
+                edot.title = `Earnings ${m}-${d}`;
+            } else {
+                edot.title = 'Option expires after earnings';
+            }
             posCell.appendChild(edot);
         }
         const nameSpan = document.createElement('span');
@@ -459,6 +455,15 @@ function _addRowInteractions(tr, pos) {
     tr.addEventListener('mouseenter', e => {
         const x = e.clientX, y = e.clientY;
         _hoverTimer = setTimeout(() => showTooltip(pos, x, y), HOVER_DELAY_MS);
+    });
+    // mouseover bubbles from child elements, so we can catch badge hovers here.
+    // When the cursor lands on any .mw-ind badge (risk/ITM/earnings), suppress
+    // the price tooltip — the badge's own native title tooltip takes over.
+    tr.addEventListener('mouseover', e => {
+        if (e.target.closest('.mw-ind')) {
+            if (_hoverTimer) { clearTimeout(_hoverTimer); _hoverTimer = null; }
+            hideTooltip();
+        }
     });
     tr.addEventListener('mouseleave', () => {
         if (_hoverTimer) { clearTimeout(_hoverTimer); _hoverTimer = null; }

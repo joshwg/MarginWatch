@@ -158,6 +158,7 @@ def _compute_display(pos: Position, cache: CacheService) -> dict:
         "is_profitable": ps.is_profitable(pos, price),
         "delta": round(delta, 3) if delta is not None else None,
         "after_earnings": after_earnings,
+        "earnings_date": earnings if after_earnings else None,
     }
 
 
@@ -381,6 +382,7 @@ def api_positions():
             "is_profitable": display["is_profitable"],
             "delta": display["delta"],
             "after_earnings": display["after_earnings"],
+            "earnings_date":  display["earnings_date"],
             "show_merge": show_merge,
             "merge_key": list(merge_key),
         })
@@ -430,6 +432,7 @@ def api_prices():
             "is_profitable":  display["is_profitable"],
             "delta":          display["delta"],
             "after_earnings": display["after_earnings"],
+            "earnings_date":  display["earnings_date"],
         }
 
     return jsonify({
