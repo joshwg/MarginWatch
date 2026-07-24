@@ -39,8 +39,11 @@ def _valid_price(price) -> bool:
         return False
 
 
-def fetch_last_price(symbol: str, use_extended: bool = False) -> float | None:
-    """Return the last traded price for *symbol*, or None on failure.
+def fetch_last_price(symbol: str, use_extended: bool = False) -> tuple[float | None, str | None]:
+    """Return (price, session) for *symbol*, or (None, None) on failure.
+
+    *session* is 'pre' or 'post' when the returned price came from extended-hours
+    data, or None when it's a regular-session price.
 
     Routes through get_provider() so Massive is used when MASSIVE_API_KEY is set.
     When use_extended=True, prefers post-market then pre-market price.
@@ -51,18 +54,20 @@ def fetch_last_price(symbol: str, use_extended: bool = False) -> float | None:
         from option_lib.data_provider import get_provider
         info = get_provider().get_stock_info(symbol)
         if info.get('success'):
-            if use_extended:
-                price = (info.get('post_market_price') or info.get('pre_market_price')
-                         or info.get('current_price'))
+            session = None
+            if use_extended and info.get('post_market_price'):
+                price, session = info.get('post_market_price'), 'post'
+            elif use_extended and info.get('pre_market_price'):
+                price, session = info.get('pre_market_price'), 'pre'
             else:
                 price = info.get('current_price')
             if price and _valid_price(price):
-                return float(price)
+                return float(price), session
             if price is not None:
                 log.warning("fetch_last_price(%s): implausible price %s from %s",
                             symbol, price, provider_label)
                 _fetch_failures[symbol] = f"implausible price ({price}) from {provider_label}"
-                return None
+                return None, None
         # success=False or price=None: fall through to yfinance
     except ModuleNotFoundError:
         pass   # option_lib not installed — use yfinance directly
@@ -84,17 +89,17 @@ def fetch_last_price(symbol: str, use_extended: bool = False) -> float | None:
         if price is None:
             log.warning("fetch_last_price(%s): all methods returned None", symbol)
             _fetch_failures[symbol] = f"no price data returned by {provider_label}"
-            return None
+            return None, None
         if not _valid_price(price):
             log.warning("fetch_last_price(%s): implausible price %s — treating as unavailable",
                         symbol, price)
             _fetch_failures[symbol] = f"implausible price ({price}) from {provider_label}"
-            return None
-        return float(price)
+            return None, None
+        return float(price), None
     except Exception as exc:
         log.warning("fetch_last_price(%s) failed: %s", symbol, exc)
         _fetch_failures[symbol] = f"price fetch failed from {provider_label} ({type(exc).__name__})"
-        return None
+        return None, None
 
 
 def fetch_option_theoretical_price(symbol: str, expiration_iso: str,

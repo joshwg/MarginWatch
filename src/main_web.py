@@ -358,6 +358,7 @@ def api_positions():
             "id": pos.id,
             "symbol": pos.symbol,
             "price": round(stock_price, 2) if stock_price is not None else None,
+            "price_session": _cache.price_session(pos.symbol),
             "option_type": pos.option_type,
             "strike": pos.strike,
             "expiration": exp_display,
@@ -422,6 +423,7 @@ def api_prices():
         stock_price = _cache.price(pos.symbol)
         updates[pos.id] = {
             "price":         round(stock_price, 2) if stock_price is not None else None,
+            "price_session": _cache.price_session(pos.symbol),
             "itm":           display["itm"],
             "itm_amount":    display["itm_amount"],
             "opt_str":       display["opt_str"],
@@ -444,10 +446,11 @@ def api_prices():
 
 @app.route("/api/quote/<symbol>")
 def api_quote(symbol: str):
-    """Return the cached (or freshly fetched) stock price for use in the add-position form."""
+    """Return the cached (or freshly fetched) stock price and earnings date for use in the add-position form."""
     sym = symbol.strip().upper()
     price = _cache.fetch_price(sym)
-    return jsonify({"symbol": sym, "price": price})
+    earnings = _cache.fetch_earnings_date(sym)
+    return jsonify({"symbol": sym, "price": price, "earnings_date": earnings})
 
 
 @app.route("/api/price/<symbol>")

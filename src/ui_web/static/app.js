@@ -9,6 +9,12 @@ let _progressPoller = null;    // interval handle for fetch-progress polling
 let _pricesFetchCtrl = null;  // AbortController for the in-flight /api/prices request
 
 // ---------------------------------------------------------------------------
+// App-wide state
+// ---------------------------------------------------------------------------
+// Earnings date (YYYY-MM-DD) for the symbol currently entered in the Add form.
+let _earningsDate = null;
+
+// ---------------------------------------------------------------------------
 // Init
 // ---------------------------------------------------------------------------
 
@@ -54,12 +60,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         const sym = this.value.trim().toUpperCase();
         if (!sym) return;
         const strikeEl = document.getElementById('fStrike');
-        if (strikeEl.value && parseFloat(strikeEl.value) !== 0) return;
         try {
             const resp = await fetch(`/api/quote/${sym}`);
             if (!resp.ok) return;
             const data = await resp.json();
-            if (data.price) strikeEl.value = Math.round(data.price * 0.97);
+            if (data.price && (!strikeEl.value || parseFloat(strikeEl.value) === 0))
+                strikeEl.value = Math.round(data.price * 0.97);
+            _earningsDate = data.earnings_date || null;
+            updateEarningsWarning();
         } catch (_) { /* ignore fetch errors */ }
     });
 
@@ -95,6 +103,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
 
     document.getElementById('fExpiration').addEventListener('change', function () {
+        updateEarningsWarning();
         if (document.getElementById('fType').value !== 'STOCK') return;
         if (!this.value) return;
         // Quantity = shares ÷ 100 (contracts to cover the position)
@@ -429,7 +438,13 @@ let _hoverTimer = null;   // hover delay timer handle
 
 function showTooltip(pos, clientX, clientY) {
     const tip = document.getElementById('posTooltip');
-    tip.textContent = pos.price != null ? `${pos.symbol} $${pos.price.toFixed(2)}` : `${pos.symbol} —`;
+    let priceStr = `${pos.symbol} —`;
+    if (pos.price != null) {
+        const suffix = pos.price_session === 'pre' ? ' (pre)'
+                      : pos.price_session === 'post' ? ' (post)' : '';
+        priceStr = `${pos.symbol} $${pos.price.toFixed(2)}${suffix}`;
+    }
+    tip.textContent = priceStr;
     tip.style.display = 'block';
 
     const tw = tip.offsetWidth, th = tip.offsetHeight;
@@ -584,6 +599,7 @@ function nextOptionFriday() {
 
 function openAddModal() {
     _editId = null;
+    _earningsDate = null;
     document.getElementById('positionModalTitle').textContent = 'Add Position';
     document.getElementById('positionForm').reset();
     document.getElementById('fExpiration').value = nextOptionFriday();
@@ -594,6 +610,16 @@ function openAddModal() {
     updateFormFields();
     _posModal.show();
     setTimeout(() => document.getElementById('fSymbol').focus(), MODAL_FOCUS_DELAY_MS);
+}
+
+function updateEarningsWarning() {
+    if (_editId !== null) return;   // only for Add, not Edit
+    const expiration = document.getElementById('fExpiration').value;
+    const titleEl = document.getElementById('positionModalTitle');
+    const crossesEarnings = _earningsDate && expiration && expiration >= _earningsDate;
+    titleEl.textContent = crossesEarnings
+        ? 'Add Position (crosses earnings)'
+        : 'Add Position';
 }
 
 async function editPosition(id) {

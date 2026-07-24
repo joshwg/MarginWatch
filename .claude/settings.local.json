@@ -6,7 +6,13 @@
       "Bash(find /mnt/c/Users/josh/Docs/lab/MarginWatch/venv/lib -path \"*/option_lib*\" 2>/dev/null | head -20)",
       "Read(//mnt/c/Users/josh/Docs/lab/MarginWatch/venv/**)",
       "Bash(find /mnt/c/Users/josh/Docs/lab/MarginWatch -name \"*.py\" 2>/dev/null | grep -v venv | grep -i \"massive\\\\|yahoo_data\\\\|option_lib\" | head -20)",
-      "Read(//mnt/c/Users/josh/Docs/lab/**)"
+      "Read(//mnt/c/Users/josh/Docs/lab/**)",
+      "Bash(cd /home/josh/projects/MarginWatch)",
+      "Bash(export PYTHONPATH=src)",
+      "Bash(python -m py_compile src/services/market_data_service.py src/services/cache_service.py src/main_web.py)",
+      "Bash(echo OK)",
+      "Bash(wslpath -u '\\\\\\\\wsl.localhost\\\\Ubuntu\\\\home\\\\josh\\\\projects\\\\MarginWatch')",
+      "Read(///wsl.localhost/Ubuntu/home/josh/**)"
     ]
   }
 }

@@ -34,6 +34,7 @@ class CacheService:
         self._r = r
         self._use_extended = use_extended
         self._price: dict[str, float | None] = {}
+        self._price_session: dict[str, str | None] = {}
         self._price_ts: dict[str, float] = {}
         self._opt_price: dict[tuple, float | None] = {}
         self._theta: dict[tuple, float | None] = {}
@@ -58,6 +59,7 @@ class CacheService:
             return
         self._use_extended = value
         self._price.clear()
+        self._price_session.clear()
         self._price_ts.clear()
         self._opt_price.clear()
         self._theta.clear()
@@ -66,6 +68,7 @@ class CacheService:
     def invalidate(self, symbol: str) -> None:
         """Drop all cached data for *symbol* so the next fetch is fresh."""
         self._price.pop(symbol, None)
+        self._price_session.pop(symbol, None)
         self._price_ts.pop(symbol, None)
         self._opt_price = {k: v for k, v in self._opt_price.items() if k[0] != symbol}
         self._theta     = {k: v for k, v in self._theta.items()     if k[0] != symbol}
@@ -90,15 +93,20 @@ class CacheService:
         A None result (fetch failed) is not cached so the next call retries immediately.
         """
         if time.monotonic() - self._price_ts.get(symbol, 0.0) > _PRICE_TTL:
-            price = mds.fetch_last_price(symbol, use_extended=self._use_extended)
+            price, session = mds.fetch_last_price(symbol, use_extended=self._use_extended)
             if price is not None:
                 self._price[symbol] = price
+                self._price_session[symbol] = session
                 self._price_ts[symbol] = time.monotonic()
         return self._price.get(symbol)
 
     def price(self, symbol: str) -> float | None:
         """Return the cached stock price without triggering a network fetch."""
         return self._price.get(symbol)
+
+    def price_session(self, symbol: str) -> str | None:
+        """Return 'pre', 'post', or None (regular session) for the cached price."""
+        return self._price_session.get(symbol)
 
     def opt_price(self, key: tuple) -> float | None:
         return self._opt_price.get(key)
@@ -128,6 +136,12 @@ class CacheService:
         return self._delta.get(key)
 
     def earnings_date(self, symbol: str) -> str | None:
+        return self._earnings.get(symbol)
+
+    def fetch_earnings_date(self, symbol: str) -> str | None:
+        """Return the earnings date, fetching from the network if not yet cached."""
+        if symbol not in self._earnings:
+            self._earnings[symbol] = mds.fetch_earnings_date(symbol)
         return self._earnings.get(symbol)
 
     # ------------------------------------------------------------------
