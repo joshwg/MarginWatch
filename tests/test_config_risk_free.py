@@ -22,6 +22,7 @@ import json
 import tempfile
 import shutil
 from datetime import datetime
+from pathlib import Path
 
 os.environ.setdefault("MARGIN_PWD", "test")
 
@@ -32,17 +33,29 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 # ---------------------------------------------------------------------------
 
 _tmpdir = None
+_saved_cfg_paths = None
 
 
 def _setup():
-    """Create a temp DB directory and wire db.DB_PATH to it."""
-    global _tmpdir
+    """Point the DB *and* the config file at a temp directory.
+
+    /api/config is backed by data/marginwatch.cfg, not the database, so
+    redirecting db.DB_PATH alone left these tests writing to the real user
+    config — which is how RiskFreeRate ended up stuck at the 20.0 that
+    test_rate_20_accepted posts.
+    """
+    global _tmpdir, _saved_cfg_paths
     _tmpdir = tempfile.mkdtemp(prefix="mw_test_")
 
     import db
     db.DB_DIR  = _tmpdir
     db.DB_PATH = os.path.join(_tmpdir, "test.db")
     db.init_db()
+
+    import config
+    _saved_cfg_paths = (config.DATA_DIR, config.CONFIG_FILE)
+    config.DATA_DIR    = Path(_tmpdir)
+    config.CONFIG_FILE = Path(_tmpdir) / "marginwatch.cfg"
 
     # Seed a default RiskFreeRate so GET tests have something to find
     with db.get_connection() as conn:
@@ -62,8 +75,32 @@ def _setup():
 
 
 def _teardown():
+    if _saved_cfg_paths:
+        import config
+        config.DATA_DIR, config.CONFIG_FILE = _saved_cfg_paths
     if _tmpdir:
         shutil.rmtree(_tmpdir, ignore_errors=True)
+
+
+try:
+    import pytest
+
+    @pytest.fixture(autouse=True)
+    def _isolated_db():
+        """Give every test its own freshly seeded database.
+
+        _setup() is called explicitly by the __main__ runner below, but pytest
+        never sees it — so under pytest the tests ran against the real
+        data/marginwatch.db.  test_rate_20_accepted would write RiskFreeRate=20.0
+        and leave it there, and the next run's GET test read 20.0 instead of the
+        seeded 4.5.  That also meant the suite mutated real user config.
+        """
+        _setup()
+        yield
+        _teardown()
+
+except ImportError:      # running standalone; the __main__ block does its own setup
+    pass
 
 
 def _make_client():

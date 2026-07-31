@@ -12,7 +12,11 @@
       "Bash(python -m py_compile src/services/market_data_service.py src/services/cache_service.py src/main_web.py)",
       "Bash(echo OK)",
       "Bash(wslpath -u '\\\\\\\\wsl.localhost\\\\Ubuntu\\\\home\\\\josh\\\\projects\\\\MarginWatch')",
-      "Read(///wsl.localhost/Ubuntu/home/josh/**)"
+      "Read(///wsl.localhost/Ubuntu/home/josh/**)",
+      "Bash(python -c \"import option_lib, os; print\\(option_lib.__file__\\)\")",
+      "Bash(wsl.exe -e bash -lc 'cd ~/projects/MarginWatch && source venv/bin/activate && python -c \"import option_lib,os;print\\(option_lib.__file__\\);print\\(bool\\(os.environ.get\\(\\\\\"MASSIVE_API_KEY\\\\\"\\)\\)\\)\"')",
+      "Bash(wsl.exe -e bash -lc 'cd ~/projects/MarginWatch && source venv/bin/activate && export PYTHONPATH=src:/home/josh/projects/option_lib && python -c \" *)",
+      "Bash(wsl.exe *)"
     ]
   }
 }

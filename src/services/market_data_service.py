@@ -7,6 +7,8 @@ provider so switching the env var is all that is needed to switch sources.
 
 import logging
 import os
+from datetime import datetime, time as _time
+from zoneinfo import ZoneInfo
 
 log = logging.getLogger(__name__)
 
@@ -14,6 +16,11 @@ log = logging.getLogger(__name__)
 # is treated as a data error and discarded.
 _PRICE_MIN =       0.01   # nothing trades below a penny
 _PRICE_MAX  = 1_000_000   # nothing trades above $1M
+
+# Regular US equity session, Eastern time.
+_MARKET_TZ    = ZoneInfo("America/New_York")
+_MARKET_OPEN  = _time(9, 30)
+_MARKET_CLOSE = _time(16, 0)
 
 # Module-level fetch-failure tracking.  Each failed symbol maps to a short
 # human-readable reason.  Callers collect and clear via pop_fetch_failures().
@@ -27,8 +34,35 @@ def pop_fetch_failures() -> dict[str, str]:
     return result
 
 
+def in_extended_hours(now: datetime | None = None) -> bool:
+    """True when the US equity market is outside its regular 9:30–16:00 ET session.
+
+    Weekends and the pre/post windows both count.  Market holidays are not
+    tracked, so a holiday reads as extended hours — harmless, because no
+    extended-hours quote exists then and fetch_last_price() falls back to the
+    regular price with session=None.
+    """
+    now = now or datetime.now(_MARKET_TZ)
+    if now.weekday() >= 5:            # Saturday / Sunday
+        return True
+    return not (_MARKET_OPEN <= now.time() < _MARKET_CLOSE)
+
+
 def _provider_name() -> str:
     return "Massive.com" if os.environ.get("MASSIVE_API_KEY") else "Yahoo Finance"
+
+
+# Logged once per process: a missing option_lib silently downgrades every price
+# to bare yfinance, which has no extended-hours support at all.
+_warned_missing_option_lib = False
+
+
+def _warn_missing_option_lib() -> None:
+    global _warned_missing_option_lib
+    if not _warned_missing_option_lib:
+        _warned_missing_option_lib = True
+        log.warning("option_lib not importable — falling back to plain yfinance; "
+                    "extended-hours prices and %s data are unavailable", _provider_name())
 
 
 def _valid_price(price) -> bool:
@@ -46,7 +80,8 @@ def fetch_last_price(symbol: str, use_extended: bool = False) -> tuple[float | N
     data, or None when it's a regular-session price.
 
     Routes through get_provider() so Massive is used when MASSIVE_API_KEY is set.
-    When use_extended=True, prefers post-market then pre-market price.
+    When use_extended=True, uses whichever extended-hours price the provider
+    reports; at most one of pre/post is populated for any given session.
     Falls back to direct yfinance if option_lib is not installed.
     """
     provider_label = _provider_name()
@@ -54,13 +89,12 @@ def fetch_last_price(symbol: str, use_extended: bool = False) -> tuple[float | N
         from option_lib.data_provider import get_provider
         info = get_provider().get_stock_info(symbol)
         if info.get('success'):
-            session = None
-            if use_extended and info.get('post_market_price'):
-                price, session = info.get('post_market_price'), 'post'
-            elif use_extended and info.get('pre_market_price'):
-                price, session = info.get('pre_market_price'), 'pre'
-            else:
-                price = info.get('current_price')
+            price, session = info.get('current_price'), None
+            if use_extended:
+                for key, name in (('pre_market_price', 'pre'), ('post_market_price', 'post')):
+                    if info.get(key):
+                        price, session = info.get(key), name
+                        break
             if price and _valid_price(price):
                 return float(price), session
             if price is not None:
@@ -70,7 +104,7 @@ def fetch_last_price(symbol: str, use_extended: bool = False) -> tuple[float | N
                 return None, None
         # success=False or price=None: fall through to yfinance
     except ModuleNotFoundError:
-        pass   # option_lib not installed — use yfinance directly
+        _warn_missing_option_lib()   # not installed — use yfinance directly
     except Exception as exc:
         log.warning("fetch_last_price(%s) provider fetch failed: %s", symbol, exc)
 

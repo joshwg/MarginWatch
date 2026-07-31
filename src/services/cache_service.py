@@ -30,12 +30,16 @@ class CacheService:
         all option pricing, theta, and delta calculations.
     """
 
-    def __init__(self, r: float = 0.045, use_extended: bool = False):
+    def __init__(self, r: float = 0.045):
         self._r = r
-        self._use_extended = use_extended
+        # Derived from the clock, never set by the user — see _sync_extended_hours().
+        self._use_extended = mds.in_extended_hours()
         self._price: dict[str, float | None] = {}
         self._price_session: dict[str, str | None] = {}
         self._price_ts: dict[str, float] = {}
+        # Extended-hours mode in force when each price was fetched.  Sent to the
+        # client so a hover can tell that the session has turned over since.
+        self._price_extended: dict[str, bool] = {}
         self._opt_price: dict[tuple, float | None] = {}
         self._theta: dict[tuple, float | None] = {}
         self._delta: dict[tuple, float | None] = {}
@@ -49,18 +53,22 @@ class CacheService:
     # Public interface
     # ------------------------------------------------------------------
 
-    def set_extended_hours(self, value: bool) -> None:
-        """Switch extended-hours mode and clear all cached market data.
+    def _sync_extended_hours(self) -> None:
+        """Re-derive extended-hours mode from the clock, clearing caches on a change.
 
         Prices, option greeks, and the options chain all use S (the stock price)
-        so everything must re-fetch with the new underlying price.
+        so everything must re-fetch with the new underlying price.  Called before
+        each fetch rather than on a timer: the session flips at most twice a day
+        and the check costs one datetime comparison.
         """
+        value = mds.in_extended_hours()
         if self._use_extended == value:
             return
         self._use_extended = value
         self._price.clear()
         self._price_session.clear()
         self._price_ts.clear()
+        self._price_extended.clear()
         self._opt_price.clear()
         self._theta.clear()
         self._delta.clear()
@@ -70,6 +78,7 @@ class CacheService:
         self._price.pop(symbol, None)
         self._price_session.pop(symbol, None)
         self._price_ts.pop(symbol, None)
+        self._price_extended.pop(symbol, None)
         self._opt_price = {k: v for k, v in self._opt_price.items() if k[0] != symbol}
         self._theta     = {k: v for k, v in self._theta.items()     if k[0] != symbol}
         self._delta     = {k: v for k, v in self._delta.items()     if k[0] != symbol}
@@ -77,6 +86,7 @@ class CacheService:
 
     def fetch_all(self, positions: list[Position]) -> None:
         """Fetch any missing prices and greeks for all positions."""
+        self._sync_extended_hours()
         self._fetch_prices(positions)
         self._fetch_greeks(positions)
         # Collect any new failures; setdefault keeps the first (price) error per symbol
@@ -92,12 +102,14 @@ class CacheService:
 
         A None result (fetch failed) is not cached so the next call retries immediately.
         """
+        self._sync_extended_hours()
         if time.monotonic() - self._price_ts.get(symbol, 0.0) > _PRICE_TTL:
             price, session = mds.fetch_last_price(symbol, use_extended=self._use_extended)
             if price is not None:
                 self._price[symbol] = price
                 self._price_session[symbol] = session
                 self._price_ts[symbol] = time.monotonic()
+                self._price_extended[symbol] = self._use_extended
         return self._price.get(symbol)
 
     def price(self, symbol: str) -> float | None:
@@ -107,6 +119,19 @@ class CacheService:
     def price_session(self, symbol: str) -> str | None:
         """Return 'pre', 'post', or None (regular session) for the cached price."""
         return self._price_session.get(symbol)
+
+    def price_age(self, symbol: str) -> float | None:
+        """Seconds since *symbol*'s price was fetched, or None if never fetched.
+
+        Sent to the client as an age rather than a timestamp so the two clocks
+        never need to agree.
+        """
+        ts = self._price_ts.get(symbol)
+        return None if ts is None else time.monotonic() - ts
+
+    def price_extended(self, symbol: str) -> bool | None:
+        """Whether extended-hours mode was in force when the price was fetched."""
+        return self._price_extended.get(symbol)
 
     def opt_price(self, key: tuple) -> float | None:
         return self._opt_price.get(key)

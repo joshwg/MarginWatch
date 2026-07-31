@@ -23,6 +23,9 @@ const LONGPRESS_DELAY_MS = 500;
 /** How long the price tooltip stays visible after a touch */
 const TOOLTIP_DISMISS_MS = 3000;
 
+/** A cached price older than this is stale — matches CacheService._PRICE_TTL */
+const STALE_PRICE_MS = 600000;
+
 /** How long the "Saved" confirmation message stays visible */
 const SAVED_MSG_DISMISS_MS = 3000;
 

@@ -93,13 +93,16 @@ document.addEventListener('DOMContentLoaded', async () => {
         this.value = Math.max(0, val + delta);
     });
 
+    // -/= step one day, </> step one week.
     document.getElementById('fExpiration').addEventListener('keydown', function (e) {
-        if (e.key !== '-' && e.key !== '=') return;
+        const days = { '-': -1, '=': 1, '<': -7, '>': 7 }[e.key];
+        if (days === undefined) return;
         e.preventDefault();
-        const d = new Date(this.value + 'T00:00:00');
-        if (isNaN(d)) return;
-        d.setDate(d.getDate() + (e.key === '=' ? 1 : -1));
-        this.value = d.toISOString().slice(0, 10);
+        const next = shiftDateStr(this.value, days);
+        if (next === null) return;
+        this.value = next;
+        // Assigning .value fires no 'change', so refresh the badge by hand.
+        updateEarningsWarning();
     });
 
     document.getElementById('fExpiration').addEventListener('change', function () {
@@ -119,15 +122,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     document.getElementById('confirmModal').addEventListener('hide.bs.modal', () => {
         if (document.activeElement?.closest('#confirmModal')) document.activeElement.blur();
-    });
-
-    document.getElementById('cfgExtHours').addEventListener('change', async function () {
-        await fetch('/api/extended-hours', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ enabled: this.checked }),
-        });
-        loadPositions();
     });
 
     document.getElementById('fetchErrorDismiss').addEventListener('click', () => {
@@ -171,8 +165,6 @@ async function loadPositions() {
         _pricesFetchCtrl.abort();
         _pricesFetchCtrl = null;
         _stopProgressPolling();
-        const extChkPrev = document.getElementById('cfgExtHours');
-        if (extChkPrev) extChkPrev.disabled = false;
     }
 
     // ── Phase 1: positions from the database (fast) ──────────────────────────
@@ -181,6 +173,7 @@ async function loadPositions() {
         if (resp.status === 401) { location.href = '/login'; return; }
         const data = await resp.json();
         _positions = data.positions || [];   // guard: never assign undefined
+        _stampFetchTimes(_positions);
         if (data.summary) updateSummary(data.summary);
         showFetchErrors(data.fetch_errors || []);
     } catch (e) {
@@ -191,8 +184,6 @@ async function loadPositions() {
     renderTable();   // show the table immediately with whatever is cached
 
     // ── Phase 2: live market prices (slow, with progress bar) ────────────────
-    const extChk = document.getElementById('cfgExtHours');
-    if (extChk) extChk.disabled = true;   // prevent mid-fetch toggle
     _pricesFetchCtrl = new AbortController();
     _startProgressPolling();
     try {
@@ -205,6 +196,7 @@ async function loadPositions() {
         for (const pos of _positions) {
             if (upd[pos.id]) Object.assign(pos, upd[pos.id]);
         }
+        _stampFetchTimes(_positions);
         // Update theta in the summary (the only summary field that needs prices).
         const sumEl = document.getElementById('totalTheta');
         if (sumEl && data.total_theta != null)
@@ -216,12 +208,11 @@ async function loadPositions() {
         console.error('[MarginWatch] price fetch failed:', e);
         _stopProgressPolling();
         _setFetchStatus(`⚠ Price fetch failed: ${e.message || e}`, true);
-        if (extChk) extChk.disabled = false;
         return;
     }
     _stopProgressPolling();
-    if (extChk) extChk.disabled = false;
     renderTable();   // re-render with live prices filled in
+    _refreshTooltipText();   // a hover-triggered refresh updates the open tooltip
 }
 
 function _startProgressPolling() {
@@ -276,7 +267,6 @@ async function loadConfig() {
         parseFloat(cfg.MarginMultiplier || 1.5).toFixed(1);
     document.getElementById('cfgRiskFree').value =
         parseFloat(cfg.RiskFreeRate || 4.5).toFixed(1);
-    // cfgExtHours intentionally not loaded from config — defaults to unchecked each session
     const radio = document.querySelector(
         `input[name="sort"][value="${cfg.SortOrder || 'alpha'}"]`
     );
@@ -435,16 +425,64 @@ function renderTable() {
 
 let _lpTimer    = null;   // long-press timer handle
 let _hoverTimer = null;   // hover delay timer handle
+let _tipPosId   = null;   // id of the position the tooltip is currently showing
+
+/** True when the US market is outside its regular 9:30–16:00 ET session.
+ *  Mirrors market_data_service.in_extended_hours(); ET is read from the
+ *  Intl API so it stays correct regardless of the viewer's own timezone. */
+function _isExtendedHoursNow() {
+    const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'America/New_York',
+        weekday: 'short', hour: 'numeric', minute: 'numeric', hourCycle: 'h23',
+    }).formatToParts(new Date());
+    const get = t => parts.find(p => p.type === t).value;
+    const weekday = get('weekday');
+    if (weekday === 'Sat' || weekday === 'Sun') return true;
+    const mins = parseInt(get('hour'), 10) * 60 + parseInt(get('minute'), 10);
+    return mins < 9 * 60 + 30 || mins >= 16 * 60;
+}
+
+/** True when a position's cached price should be re-fetched: either it has aged
+ *  past the TTL, or the market has crossed a session boundary since the fetch
+ *  (in either direction, so the pre/post basis is re-derived). */
+function _priceIsStale(pos) {
+    if (pos._fetchedAt == null) return false;   // never priced — nothing to refresh
+    if (Date.now() - pos._fetchedAt > STALE_PRICE_MS) return true;
+    return pos.price_extended != null && pos.price_extended !== _isExtendedHoursNow();
+}
+
+/** Record when each position's price was fetched, from the server-supplied age.
+ *  Sending an age rather than a timestamp keeps the two clocks independent. */
+function _stampFetchTimes(positions) {
+    const now = Date.now();
+    for (const pos of positions) {
+        pos._fetchedAt = pos.price_age_s == null ? null : now - pos.price_age_s * 1000;
+    }
+}
+
+function _tooltipText(pos) {
+    if (pos.price == null) return `${pos.symbol} —`;
+    const suffix = pos.price_session === 'pre' ? ' (pre)'
+                  : pos.price_session === 'post' ? ' (post)' : '';
+    return `${pos.symbol} $${pos.price.toFixed(2)}${suffix}`;
+}
+
+/** Rewrite a visible tooltip after a refresh, so a hover that triggered the
+ *  fetch shows the new price without the user moving the cursor. */
+function _refreshTooltipText() {
+    const tip = document.getElementById('posTooltip');
+    if (_tipPosId == null || tip.style.display === 'none') return;
+    const pos = _positions.find(p => p.id === _tipPosId);
+    if (pos) tip.textContent = _tooltipText(pos);
+}
 
 function showTooltip(pos, clientX, clientY) {
+    // A hover on stale data kicks off a refresh; the tooltip shows what we have
+    // now and _refreshTooltipText() updates it in place when the fetch lands.
+    if (_priceIsStale(pos) && !_pricesFetchCtrl) loadPositions();
+    _tipPosId = pos.id;
     const tip = document.getElementById('posTooltip');
-    let priceStr = `${pos.symbol} —`;
-    if (pos.price != null) {
-        const suffix = pos.price_session === 'pre' ? ' (pre)'
-                      : pos.price_session === 'post' ? ' (post)' : '';
-        priceStr = `${pos.symbol} $${pos.price.toFixed(2)}${suffix}`;
-    }
-    tip.textContent = priceStr;
+    tip.textContent = _tooltipText(pos);
     tip.style.display = 'block';
 
     const tw = tip.offsetWidth, th = tip.offsetHeight;
@@ -463,6 +501,7 @@ function showTooltip(pos, clientX, clientY) {
 
 function hideTooltip() {
     document.getElementById('posTooltip').style.display = 'none';
+    _tipPosId = null;
 }
 
 function _addRowInteractions(tr, pos) {
@@ -585,6 +624,23 @@ async function saveConfig() {
 // CRUD
 // ---------------------------------------------------------------------------
 
+/** Format a Date as yyyy-mm-dd in *local* time.
+ *  toISOString() converts to UTC first, which lands on the wrong calendar day
+ *  for any viewer east of Greenwich (local midnight is the previous day in UTC). */
+function toDateStr(d) {
+    const pad = n => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/** Shift a yyyy-mm-dd string by *days*, or null if it isn't a valid date.
+ *  setDate() rolls month and year boundaries over for us. */
+function shiftDateStr(iso, days) {
+    const d = new Date(iso + 'T00:00:00');
+    if (isNaN(d)) return null;
+    d.setDate(d.getDate() + days);
+    return toDateStr(d);
+}
+
 function nextOptionFriday() {
     const today = new Date();
     const d = today.getDay(); // 0=Sun, 1=Mon … 5=Fri, 6=Sat
@@ -594,7 +650,7 @@ function nextOptionFriday() {
     const days = d === 5 ? 7 : d === 6 ? 6 : d === 0 ? 5 : (5 - d) + 7;
     const result = new Date(today);
     result.setDate(today.getDate() + days);
-    return result.toISOString().slice(0, 10);
+    return toDateStr(result);
 }
 
 function openAddModal() {

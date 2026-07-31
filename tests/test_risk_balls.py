@@ -79,14 +79,17 @@ def _stock_no_cover():
 class _FakeCache:
     """CacheService stand-in with controllable per-strike delta values."""
 
-    def __init__(self, delta_by_strike: dict):
+    def __init__(self, delta_by_strike: dict, earnings: str | None = None):
         self._delta_by_strike = delta_by_strike
+        self._earnings = earnings
 
     # key = (symbol, expiration, strike, otype)
     def price(self, symbol):      return 500.0
     def opt_price(self, key):     return 3.50
     def theta(self, key):         return -0.08
     def delta(self, key):         return self._delta_by_strike.get(key[2])
+    # None = no upcoming earnings; these tests are about delta, not the badge.
+    def earnings_date(self, symbol): return self._earnings
 
 
 # ---------------------------------------------------------------------------
