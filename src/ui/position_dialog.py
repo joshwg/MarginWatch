@@ -98,6 +98,8 @@ class PositionDialog(tk.Toplevel):
                    command=self._pick_date).pack(side=tk.LEFT, padx=(2, 0))
         exp_entry.bind("<equal>", self._exp_plus_day)
         exp_entry.bind("<minus>", self._exp_minus_day)
+        exp_entry.bind("<greater>", self._exp_plus_week)
+        exp_entry.bind("<less>",    self._exp_minus_week)
         exp_entry.bind("<FocusOut>", self._normalize_exp_field)
         exp_entry.bind("<Return>",   self._normalize_exp_field)
 
@@ -197,6 +199,18 @@ class PositionDialog(tk.Toplevel):
             self._exp_var.set((d - timedelta(days=1)).isoformat())
         return "break"
 
+    def _exp_plus_week(self, _event=None):
+        d = _parse_date_input(self._exp_var.get())
+        if d:
+            self._exp_var.set((d + timedelta(weeks=1)).isoformat())
+        return "break"
+
+    def _exp_minus_week(self, _event=None):
+        d = _parse_date_input(self._exp_var.get())
+        if d:
+            self._exp_var.set((d - timedelta(weeks=1)).isoformat())
+        return "break"
+
     def _validate(self) -> str:
         """Return the first error string, or '' if valid. Also updates UI."""
         ot = self._type.get()
@@ -205,6 +219,8 @@ class PositionDialog(tk.Toplevel):
 
         if not self._sym.get().strip():
             error = "Symbol is required."
+        elif not is_stock and not _parse_date_input(self._exp_var.get()):
+            error = "Expiration must be a valid date."
         elif not is_stock:
             s = self._strike.get().strip()
             if not s:

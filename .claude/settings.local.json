@@ -16,7 +16,9 @@
       "Bash(python -c \"import option_lib, os; print\\(option_lib.__file__\\)\")",
       "Bash(wsl.exe -e bash -lc 'cd ~/projects/MarginWatch && source venv/bin/activate && python -c \"import option_lib,os;print\\(option_lib.__file__\\);print\\(bool\\(os.environ.get\\(\\\\\"MASSIVE_API_KEY\\\\\"\\)\\)\\)\"')",
       "Bash(wsl.exe -e bash -lc 'cd ~/projects/MarginWatch && source venv/bin/activate && export PYTHONPATH=src:/home/josh/projects/option_lib && python -c \" *)",
-      "Bash(wsl.exe *)"
+      "Bash(wsl.exe *)",
+      "Bash(sed -n '/^function showTooltip/,/^}/p' src/ui_web/static/app.js)",
+      "Bash(sed -n '/^function hideTooltip/,/^}/p' src/ui_web/static/app.js)"
     ]
   }
 }

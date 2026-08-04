@@ -22,16 +22,36 @@
 .mw-actions-col { width: 76px; }
 
 /* Row action buttons */
-.mw-row-btn { font-size: 11px; }
+.mw-row-btn { font-size: 11px; touch-action: manipulation; }
 
 /* ── Responsive breakpoints ───────────────────────────────────────────────── */
 
-/* Cover screen portrait — full width, compact table, larger touch targets */
+/* Cover screen portrait — full width, compact table */
 @media (max-width: 599px) {
     .mw-app { max-width: 100%; }
     #positionsTable { font-size: 0.78rem; }
-    .mw-actions-col { width: 68px; }
-    .mw-row-btn { font-size: 13px; padding: 3px 6px !important; }
+}
+
+/* Touch devices — finger-sized targets for the row buttons, and no text
+   selection in the table so a tap on a row reads as a tap, not a drag. */
+@media (pointer: coarse) {
+    #positionsTable {
+        -webkit-user-select: none;
+        user-select: none;
+        -webkit-touch-callout: none;
+    }
+    .mw-actions-col { width: 84px; }
+    .mw-row-btn {
+        font-size: 15px;
+        min-width: 34px;
+        min-height: 36px;
+        margin: 0 1px;
+        padding: 0 !important;
+        border: 1px solid rgba(0, 0, 0, 0.25);
+        border-radius: 5px;
+        background-color: rgba(255, 255, 255, 0.45);
+    }
+    .mw-row-btn:active { background-color: rgba(0, 0, 0, 0.15); }
 }
 
 /* Inner screen open / tablet — allow wider layout */
@@ -48,7 +68,9 @@
 #positionsTable tbody tr { --bs-table-bg: transparent; }
 #positionsTable tbody tr td { background-color: inherit; }
 
-/* ITM / profit indicator swatches */
+/* ITM / profit indicator swatches. Rendered as <button> in the table so touch
+   users can tap them for their label; the reset below keeps the button chrome
+   from showing through. */
 .mw-ind {
   display: inline-flex;
   align-items: center;
@@ -59,10 +81,36 @@
   margin-right: 3px;
   vertical-align: middle;
   flex-shrink: 0;
+  padding: 0;
+  border: none;
+  -webkit-appearance: none;
+  appearance: none;
+  touch-action: manipulation;
   box-shadow:
     inset -2px -2px 3px rgba(0,0,0,0.30),
     inset  1px  1px 2px rgba(255,255,255,0.50),
     0 1px 3px rgba(0,0,0,0.25);
+}
+
+/* Touch: enlarge the swatches and give each an invisible tap area taller than
+   the badge itself. The horizontal reach stays inside the inter-badge gap so
+   neighbouring badges never steal each other's taps. */
+@media (pointer: coarse) {
+  #positionsTable .mw-ind {
+    width: 18px;
+    height: 18px;
+    margin-right: 5px;
+    position: relative;
+  }
+  #positionsTable .mw-ind::after {
+    content: '';
+    position: absolute;
+    top: -9px; bottom: -9px; left: -2px; right: -2px;
+  }
+  #positionsTable .mw-ind-itm,
+  #positionsTable .mw-ind-earn { font-size: 11px; }
+  /* keep the legend swatches matching the table's */
+  .mw-legend .mw-ind { width: 18px; height: 18px; }
 }
 .mw-ind-itm {
   font-size: 7px;

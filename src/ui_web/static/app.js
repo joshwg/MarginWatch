@@ -138,6 +138,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('fType').addEventListener('change', updateFormFields);
     document.getElementById('btnAssigned').addEventListener('click', applyAssigned);
     document.getElementById('btnClearCover').addEventListener('click', applyClearCover);
+
+    // Touch: a tap outside the table dismisses a visible tooltip.
+    if (_isTouch) {
+        document.addEventListener('click', e => {
+            if (!e.target.closest('#positionsTable tbody tr')) hideTooltip();
+        });
+    }
 });
 
 // ---------------------------------------------------------------------------
@@ -334,16 +341,15 @@ function renderTable() {
         // Risk indicator: coloured ball showing probability of assignment
         const rc = riskColor(pos.delta);
         if (rc !== null) {
-            const risk = document.createElement('span');
-            risk.className = 'mw-ind';
+            const risk = mkIndBadge('mw-ind', '', `δ ${(pos.delta * 100).toFixed(0)}%`);
             risk.style.backgroundColor = rc;
-            risk.title = `δ ${(pos.delta * 100).toFixed(0)}%`;
             posCell.appendChild(risk);
         }
 
         if (pos.itm) {
-            const dot = document.createElement('span');
-            dot.className = 'mw-ind mw-ind-itm';
+            const dot = mkIndBadge('mw-ind mw-ind-itm', 'I', pos.itm_amount != null
+                ? `ITM $${pos.itm_amount.toFixed(2)}`
+                : 'In the money');
             // Yellow when barely ITM (< $1 or < 3% of strike) — close to the edge.
             // Green for covered calls clearly ITM (profitable assignment likely).
             // Red for short options clearly ITM (losing position).
@@ -353,10 +359,6 @@ function renderTable() {
                 ? '#FACC15'
                 : pos.is_stock_row ? COLOR_ITM_GOOD : COLOR_ITM_BAD;
             dot.style.color = barelyItm ? '#000' : '#fff';
-            dot.textContent = 'I';
-            dot.title = pos.itm_amount != null
-                ? `ITM $${pos.itm_amount.toFixed(2)}`
-                : 'In the money';
             posCell.appendChild(dot);
             if (pos.itm_amount != null) {
                 const lbl = document.createElement('span');
@@ -372,16 +374,14 @@ function renderTable() {
             posCell.appendChild(arrow);
         }
         if (pos.after_earnings) {
-            const edot = document.createElement('span');
-            edot.className = 'mw-ind mw-ind-earn';
-            edot.textContent = 'E';
+            let earnText;
             if (pos.earnings_date) {
                 const [, m, d] = pos.earnings_date.split('-');
-                edot.title = `Earnings ${m}-${d}`;
+                earnText = `Earnings ${m}-${d}`;
             } else {
-                edot.title = 'Option expires after earnings';
+                earnText = 'Option expires after earnings';
             }
-            posCell.appendChild(edot);
+            posCell.appendChild(mkIndBadge('mw-ind mw-ind-earn', 'E', earnText));
         }
         const nameSpan = document.createElement('span');
         nameSpan.textContent = pos.abbrev;
@@ -420,12 +420,15 @@ function renderTable() {
 }
 
 // ---------------------------------------------------------------------------
-// Position tooltip (hover on desktop, long-press on mobile)
+// Position tooltip (hover on desktop, tap on mobile)
 // ---------------------------------------------------------------------------
 
-let _lpTimer    = null;   // long-press timer handle
 let _hoverTimer = null;   // hover delay timer handle
+let _hideTimer  = null;   // auto-dismiss timer handle (touch)
 let _tipPosId   = null;   // id of the position the tooltip is currently showing
+
+/** Touch-style device: no hover, so the row/badge tooltips are tap-driven. */
+const _isTouch = window.matchMedia('(hover: none)').matches;
 
 /** True when the US market is outside its regular 9:30–16:00 ET session.
  *  Mirrors market_data_service.in_extended_hours(); ET is read from the
@@ -480,9 +483,15 @@ function showTooltip(pos, clientX, clientY) {
     // A hover on stale data kicks off a refresh; the tooltip shows what we have
     // now and _refreshTooltipText() updates it in place when the fetch lands.
     if (_priceIsStale(pos) && !_pricesFetchCtrl) loadPositions();
+    showTipText(_tooltipText(pos), clientX, clientY);
     _tipPosId = pos.id;
+}
+
+/** Show arbitrary text in the tooltip, anchored near (clientX, clientY). */
+function showTipText(text, clientX, clientY) {
+    _tipPosId = null;
     const tip = document.getElementById('posTooltip');
-    tip.textContent = _tooltipText(pos);
+    tip.textContent = text;
     tip.style.display = 'block';
 
     const tw = tip.offsetWidth, th = tip.offsetHeight;
@@ -497,14 +506,39 @@ function showTooltip(pos, clientX, clientY) {
 
     tip.style.left = `${x}px`;
     tip.style.top  = `${y}px`;
+
+    // On touch there is no mouseleave to close it, so it times out on its own.
+    if (_hideTimer) clearTimeout(_hideTimer);
+    if (_isTouch) _hideTimer = setTimeout(hideTooltip, TOOLTIP_DISMISS_MS);
 }
 
 function hideTooltip() {
+    if (_hideTimer) { clearTimeout(_hideTimer); _hideTimer = null; }
     document.getElementById('posTooltip').style.display = 'none';
     _tipPosId = null;
 }
 
 function _addRowInteractions(tr, pos) {
+    if (_isTouch) {
+        // Touch: a plain tap. Long-press was unreliable — the browser's own
+        // text-selection gesture wins. A tap on an indicator badge shows that
+        // badge's text (no native title tooltips on touch); a tap anywhere else
+        // in the row shows the underlier price.
+        tr.addEventListener('click', e => {
+            if (e.target.closest('.mw-row-btn')) return;   // edit/delete/merge keep their action
+            const badge = e.target.closest('.mw-ind');
+            const x = e.clientX, y = e.clientY;
+            if (badge) {
+                showTipText(badge.title, x, y);
+            } else if (_tipPosId === pos.id) {
+                hideTooltip();                             // tap again to dismiss
+            } else {
+                showTooltip(pos, x, y);
+            }
+        });
+        return;
+    }
+
     // Desktop: hover with delay
     tr.addEventListener('mouseenter', e => {
         const x = e.clientX, y = e.clientY;
@@ -524,19 +558,6 @@ function _addRowInteractions(tr, pos) {
         hideTooltip();
     });
 
-    // Mobile: long-press (~500 ms)
-    tr.addEventListener('touchstart', e => {
-        const t = e.touches[0];
-        _lpTimer = setTimeout(() => { _lpTimer = null; showTooltip(pos, t.clientX, t.clientY); }, LONGPRESS_DELAY_MS);
-    }, { passive: true });
-    tr.addEventListener('touchmove', () => {
-        if (_lpTimer) { clearTimeout(_lpTimer); _lpTimer = null; }
-    }, { passive: true });
-    tr.addEventListener('touchend', () => {
-        if (_lpTimer) { clearTimeout(_lpTimer); _lpTimer = null; }
-        // Short delay so a tap-to-dismiss works cleanly
-        setTimeout(hideTooltip, TOOLTIP_DISMISS_MS);
-    });
 }
 
 function mkTd(text, cls) {
@@ -544,6 +565,18 @@ function mkTd(text, cls) {
     if (cls) td.className = cls;
     td.textContent = text;
     return td;
+}
+
+/** Indicator swatch (risk / ITM / earnings). A real button so touch users get a
+ *  proper tap target — the row click handler shows `text` in the price tooltip,
+ *  since native title tooltips never appear on touch. */
+function mkIndBadge(className, label, text) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = className;
+    btn.textContent = label;
+    btn.title = text;
+    return btn;
 }
 
 function mkRowBtn(label, handler) {

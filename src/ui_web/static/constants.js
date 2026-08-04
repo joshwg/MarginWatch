@@ -17,11 +17,8 @@ const COLOR_ITM_BAD = '#dc2626';
 /** Hover dwell time before the price tooltip appears */
 const HOVER_DELAY_MS = 500;
 
-/** Touch hold time before the price tooltip appears */
-const LONGPRESS_DELAY_MS = 500;
-
-/** How long the price tooltip stays visible after a touch */
-const TOOLTIP_DISMISS_MS = 3000;
+/** How long the price tooltip stays visible after a tap */
+const TOOLTIP_DISMISS_MS = 4000;
 
 /** A cached price older than this is stale — matches CacheService._PRICE_TTL */
 const STALE_PRICE_MS = 600000;
