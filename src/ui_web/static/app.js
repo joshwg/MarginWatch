@@ -6,7 +6,8 @@ let _editId = null;    // null = adding new, number = editing existing
 let _posModal = null;
 let _confirmModal = null;
 let _progressPoller = null;    // interval handle for fetch-progress polling
-let _pricesFetchCtrl = null;  // AbortController for the in-flight /api/prices request
+let _loadCtrl = null;          // AbortController for the in-flight loadPositions() (both phases)
+let _loadSeq  = 0;             // generation counter — only the newest load may touch the table
 
 // ---------------------------------------------------------------------------
 // App-wide state
@@ -165,25 +166,36 @@ async function refreshPrices() {
 async function loadPositions() {
     const sort = document.querySelector('input[name="sort"]:checked').value;
 
-    // Cancel any in-flight /api/prices from a previous loadPositions() call so
-    // it cannot race against this one — stale phase-2 results stomping on the
-    // new sort order are the most common cause of "sort doesn't stick".
-    if (_pricesFetchCtrl) {
-        _pricesFetchCtrl.abort();
-        _pricesFetchCtrl = null;
-        _stopProgressPolling();
-    }
+    // Supersede whatever load is still running: abort its requests and take a
+    // new generation number, so a reply already on the wire is discarded rather
+    // than applied. Both phases need this — a late phase-1 reply carries the
+    // *previous* sort order and would silently reinstate it, which is the
+    // classic "sort doesn't stick". Aborting alone is not enough: a request
+    // that has already been answered still resolves.
+    if (_loadCtrl) _loadCtrl.abort();
+    _stopProgressPolling();
+    const ctrl = new AbortController();
+    const seq  = ++_loadSeq;
+    _loadCtrl  = ctrl;
+    const isCurrent = () => seq === _loadSeq;
+    // Only the newest load may clear the shared handle — otherwise an older one
+    // finishing late would drop the newer one's controller and make it
+    // un-abortable.
+    const release = () => { if (isCurrent()) _loadCtrl = null; };
 
     // ── Phase 1: positions from the database (fast) ──────────────────────────
     try {
-        const resp = await fetch(`/api/positions?sort=${sort}`);
+        const resp = await fetch(`/api/positions?sort=${sort}`, { signal: ctrl.signal });
         if (resp.status === 401) { location.href = '/login'; return; }
         const data = await resp.json();
+        if (!isCurrent()) return;            // a newer load owns the table now
         _positions = data.positions || [];   // guard: never assign undefined
         _stampFetchTimes(_positions);
         if (data.summary) updateSummary(data.summary);
         showFetchErrors(data.fetch_errors || []);
     } catch (e) {
+        release();
+        if (e.name === 'AbortError') return;  // superseded — silent
         console.error('[MarginWatch] loadPositions failed:', e);
         _setFetchStatus(`⚠ Load failed: ${e.message || e}`, true);
         return;
@@ -191,13 +203,13 @@ async function loadPositions() {
     renderTable();   // show the table immediately with whatever is cached
 
     // ── Phase 2: live market prices (slow, with progress bar) ────────────────
-    _pricesFetchCtrl = new AbortController();
     _startProgressPolling();
     try {
-        const resp = await fetch('/api/prices', { signal: _pricesFetchCtrl.signal });
-        _pricesFetchCtrl = null;
-        if (resp.status === 401) { _stopProgressPolling(); location.href = '/login'; return; }
+        const resp = await fetch('/api/prices', { signal: ctrl.signal });
+        if (resp.status === 401) { release(); _stopProgressPolling(); location.href = '/login'; return; }
         const data = await resp.json();
+        if (!isCurrent()) return;
+        release();
         // Merge price-dependent fields into the existing position objects.
         const upd = data.updates || {};
         for (const pos of _positions) {
@@ -210,7 +222,7 @@ async function loadPositions() {
             sumEl.textContent = `$${data.total_theta.toLocaleString()}/d`;
         showFetchErrors(data.fetch_errors || []);
     } catch (e) {
-        _pricesFetchCtrl = null;
+        release();
         if (e.name === 'AbortError') return;  // superseded by a newer loadPositions() — silent
         console.error('[MarginWatch] price fetch failed:', e);
         _stopProgressPolling();
@@ -482,7 +494,7 @@ function _refreshTooltipText() {
 function showTooltip(pos, clientX, clientY) {
     // A hover on stale data kicks off a refresh; the tooltip shows what we have
     // now and _refreshTooltipText() updates it in place when the fetch lands.
-    if (_priceIsStale(pos) && !_pricesFetchCtrl) loadPositions();
+    if (_priceIsStale(pos) && !_loadCtrl) loadPositions();
     showTipText(_tooltipText(pos), clientX, clientY);
     _tipPosId = pos.id;
 }
