@@ -59,8 +59,10 @@
     <button type="button" class="btn-close" id="fetchErrorDismiss" aria-label="Close"></button>
   </div>
 
-  <!-- Live fetch-progress status line -->
-  <div id="fetchStatus" class="small text-muted px-1 mb-1 d-none"></div>
+  <!-- Live fetch-progress status line. Always in the layout, empty when idle:
+       hiding it shifted the whole table up and down on every load, moving rows
+       out from under a finger mid-tap. -->
+  <div id="fetchStatus" class="small text-muted px-1 mb-1 mw-status-line"></div>
 
   <!-- Positions table -->
   <div class="mw-table-wrap">

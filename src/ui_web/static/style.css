@@ -11,6 +11,17 @@
 /* Top bar wraps on narrow screens so buttons drop to a second line */
 .mw-top-bar { flex-wrap: wrap; }
 
+/* Fetch-status line: holds its height while empty so the table never shifts
+   when a load starts or ends. A row that moves mid-tap is a row the user did
+   not mean to hit. Sized for one line of .small text. */
+.mw-status-line {
+    min-height: 1.25rem;
+    line-height: 1.25rem;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
 /* Sticky header inside scroll */
 #positionsTable thead th { position: sticky; top: 0; z-index: 1; }
 
@@ -23,6 +34,18 @@
 
 /* Row action buttons */
 .mw-row-btn { font-size: 11px; touch-action: manipulation; }
+
+/* Actions cell: edit/delete/merge always sit side by side. Without nowrap a
+   narrow phone column breaks between the inline-block buttons and stacks them
+   vertically, which blows up the row height. The column takes whatever width
+   the buttons need; the table wrapper scrolls horizontally if it must. */
+.mw-actions-cell {
+    white-space: nowrap;
+    /* A cell is not a flex container by default; this keeps any future
+       wrapper element inside it on one line too. */
+    flex-wrap: nowrap;
+}
+.mw-actions-cell .mw-row-btn { display: inline-block; vertical-align: middle; }
 
 /* ── Responsive breakpoints ───────────────────────────────────────────────── */
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 import time
 
 from models import Position
@@ -33,7 +34,8 @@ class CacheService:
     def __init__(self, r: float = 0.045):
         self._r = r
         # Derived from the clock, never set by the user — see _sync_extended_hours().
-        self._use_extended = mds.in_extended_hours()
+        self._session      = mds.market_session()
+        self._use_extended = self._session != 'regular'
         self._price: dict[str, float | None] = {}
         self._price_session: dict[str, str | None] = {}
         self._price_ts: dict[str, float] = {}
@@ -49,22 +51,62 @@ class CacheService:
         # Human-readable status of the in-progress fetch ("AAPL", "TSLA options", …)
         self.current_fetch: str = ""
 
+        # ── Concurrency ────────────────────────────────────────────────────
+        # The web server is threaded and a superseded /api/prices keeps running
+        # after its client has gone (a delete or an edit mid-pull aborts the
+        # request, not the handler), so two full passes can overlap.  Without
+        # these locks both passes saw the same symbols as uncached and fetched
+        # every one of them twice.
+        #
+        # Reentrant because _fetch_prices() calls fetch_price().  Lock order is
+        # always _fetch_lock → _session_lock → per-symbol, and nothing acquires
+        # them in the other direction, so there is no cycle to deadlock on.
+        self._fetch_lock   = threading.RLock()     # one full fetch_all() at a time
+        self._session_lock = threading.Lock()      # guards the session rollover
+        self._symbol_locks: dict[str, threading.Lock] = {}
+        self._symbol_locks_guard = threading.Lock()
+
+    def _symbol_lock(self, symbol: str) -> threading.Lock:
+        """Per-symbol lock, so two callers never fetch the same symbol at once.
+
+        Single-symbol callers (the add-form quote, the background prefetch) take
+        only this, never _fetch_lock — otherwise a quote would sit behind a whole
+        price pull before it could answer.
+        """
+        with self._symbol_locks_guard:
+            lock = self._symbol_locks.get(symbol)
+            if lock is None:
+                lock = self._symbol_locks[symbol] = threading.Lock()
+            return lock
+
     # ------------------------------------------------------------------
     # Public interface
     # ------------------------------------------------------------------
 
     def _sync_extended_hours(self) -> None:
-        """Re-derive extended-hours mode from the clock, clearing caches on a change.
+        """Re-derive the market session from the clock, clearing caches on a change.
 
         Prices, option greeks, and the options chain all use S (the stock price)
         so everything must re-fetch with the new underlying price.  Called before
-        each fetch rather than on a timer: the session flips at most twice a day
-        and the check costs one datetime comparison.
+        each fetch rather than on a timer: the session flips a handful of times a
+        day and the check costs one datetime comparison.
+
+        Tracks the session name, not just extended-vs-regular: the 04:00 post→pre
+        turnover keeps extended hours in force yet changes the price basis, so a
+        boolean would leave the overnight post-market S cached into the morning.
         """
-        value = mds.in_extended_hours()
-        if self._use_extended == value:
+        session = mds.market_session()
+        if self._session == session:      # fast path: no lock on the common case
             return
-        self._use_extended = value
+        with self._session_lock:
+            if self._session == session:  # another thread just rolled us over
+                return
+            self._session      = session
+            self._use_extended = session != 'regular'
+            self._clear_priced_state()
+
+    def _clear_priced_state(self) -> None:
+        """Drop everything derived from a stock price. Caller holds _session_lock."""
         self._price.clear()
         self._price_session.clear()
         self._price_ts.clear()
@@ -75,6 +117,10 @@ class CacheService:
 
     def invalidate(self, symbol: str) -> None:
         """Drop all cached data for *symbol* so the next fetch is fresh."""
+        with self._symbol_lock(symbol):
+            self._invalidate_locked(symbol)
+
+    def _invalidate_locked(self, symbol: str) -> None:
         self._price.pop(symbol, None)
         self._price_session.pop(symbol, None)
         self._price_ts.pop(symbol, None)
@@ -85,11 +131,25 @@ class CacheService:
         self._earnings.pop(symbol, None)
 
     def fetch_all(self, positions: list[Position]) -> None:
-        """Fetch any missing prices and greeks for all positions."""
-        self._sync_extended_hours()
-        self._fetch_prices(positions)
-        self._fetch_greeks(positions)
-        # Collect any new failures; setdefault keeps the first (price) error per symbol
+        """Fetch any missing prices and greeks for all positions.
+
+        Serialised: a second caller waits for the pass already running and then
+        finds its symbols cached, instead of re-fetching every one of them in
+        parallel.  The wait is never wasted — it is spent on exactly the data
+        the second caller needs.
+        """
+        with self._fetch_lock:
+            self._sync_extended_hours()
+            self._fetch_prices(positions)
+            self._fetch_greeks(positions)
+            self._collect_failures()
+
+    def _collect_failures(self) -> None:
+        """Merge this thread's fetch failures into the shared error list.
+
+        setdefault keeps the first (price) error per symbol rather than letting a
+        later option-data error overwrite it.
+        """
         for sym, msg in mds.pop_fetch_failures().items():
             self._failed.setdefault(sym, msg)
 
@@ -101,16 +161,22 @@ class CacheService:
         """Return the stock price, re-fetching from the network if the cache is expired.
 
         A None result (fetch failed) is not cached so the next call retries immediately.
+
+        The per-symbol lock means a second caller waiting on the same symbol
+        re-checks the TTL after the first one stores its result, and so returns
+        that fresh price instead of fetching it again.
         """
         self._sync_extended_hours()
-        if time.monotonic() - self._price_ts.get(symbol, 0.0) > _PRICE_TTL:
-            price, session = mds.fetch_last_price(symbol, use_extended=self._use_extended)
-            if price is not None:
-                self._price[symbol] = price
-                self._price_session[symbol] = session
-                self._price_ts[symbol] = time.monotonic()
-                self._price_extended[symbol] = self._use_extended
-        return self._price.get(symbol)
+        with self._symbol_lock(symbol):
+            if time.monotonic() - self._price_ts.get(symbol, 0.0) > _PRICE_TTL:
+                price, session = mds.fetch_last_price(symbol, use_extended=self._use_extended)
+                if price is not None:
+                    self._price[symbol] = price
+                    self._price_session[symbol] = session
+                    self._price_ts[symbol] = time.monotonic()
+                    self._price_extended[symbol] = self._use_extended
+            self._collect_failures()
+            return self._price.get(symbol)
 
     def price(self, symbol: str) -> float | None:
         """Return the cached stock price without triggering a network fetch."""
@@ -165,9 +231,10 @@ class CacheService:
 
     def fetch_earnings_date(self, symbol: str) -> str | None:
         """Return the earnings date, fetching from the network if not yet cached."""
-        if symbol not in self._earnings:
-            self._earnings[symbol] = mds.fetch_earnings_date(symbol)
-        return self._earnings.get(symbol)
+        with self._symbol_lock(symbol):
+            if symbol not in self._earnings:
+                self._earnings[symbol] = mds.fetch_earnings_date(symbol)
+            return self._earnings.get(symbol)
 
     # ------------------------------------------------------------------
     # Private fetchers
@@ -177,8 +244,7 @@ class CacheService:
         for sym in {p.symbol for p in positions}:
             self.current_fetch = sym
             self.fetch_price(sym)
-            if sym not in self._earnings:
-                self._earnings[sym] = mds.fetch_earnings_date(sym)
+            self.fetch_earnings_date(sym)   # cached after the first call
         self.current_fetch = ""
 
     def _fetch_greeks(self, positions: list[Position]) -> None:

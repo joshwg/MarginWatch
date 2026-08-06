@@ -7,6 +7,7 @@ provider so switching the env var is all that is needed to switch sources.
 
 import logging
 import os
+import threading
 from datetime import datetime, time as _time
 from zoneinfo import ZoneInfo
 
@@ -21,17 +22,77 @@ _PRICE_MAX  = 1_000_000   # nothing trades above $1M
 _MARKET_TZ    = ZoneInfo("America/New_York")
 _MARKET_OPEN  = _time(9, 30)
 _MARKET_CLOSE = _time(16, 0)
+# Post-market pricing runs from the 16:00 close until 04:00 the next morning,
+# when pre-market takes over.  Wider than the exchanges' own 20:00 cutoff on
+# purpose: the last after-hours print stays the best available quote overnight.
+_PRE_OPEN     = _time(4, 0)
 
-# Module-level fetch-failure tracking.  Each failed symbol maps to a short
-# human-readable reason.  Callers collect and clear via pop_fetch_failures().
-_fetch_failures: dict[str, str] = {}
+# Session → the provider field holding that session's price.
+_EXTENDED_PRICE_KEY = {'pre': 'pre_market_price', 'post': 'post_market_price'}
+
+# Fetch-failure tracking: each failed symbol maps to a short human-readable
+# reason, collected and cleared by the caller via pop_fetch_failures().
+#
+# Thread-local, not module-global.  The web server is threaded, and a client
+# that navigates away (a delete or a sort mid-pull) leaves its /api/prices
+# handler running to completion — with a shared dict that abandoned handler's
+# pop would swallow the failures recorded by the request that replaced it, and
+# the error banner would silently lose them.  Each request thread now drains
+# only what it recorded itself.
+_failures = threading.local()
+
+
+def _failure_map() -> dict[str, str]:
+    """This thread's failure dict, created on first use."""
+    fmap = getattr(_failures, 'map', None)
+    if fmap is None:
+        fmap = _failures.map = {}
+    return fmap
+
+
+def record_fetch_failure(symbol: str, reason: str, *, overwrite: bool = True) -> None:
+    """Note that *symbol* could not be fetched, for the caller to collect later."""
+    if overwrite:
+        _failure_map()[symbol] = reason
+    else:
+        _failure_map().setdefault(symbol, reason)
 
 
 def pop_fetch_failures() -> dict[str, str]:
-    """Return all fetch failures recorded since the last call, then clear them."""
-    global _fetch_failures
-    result, _fetch_failures = dict(_fetch_failures), {}
+    """Return the failures this thread recorded since its last call, then clear them."""
+    fmap = _failure_map()
+    result = dict(fmap)
+    fmap.clear()
     return result
+
+
+def market_session(now: datetime | None = None) -> str:
+    """Which price basis the clock calls for, Eastern time:
+
+        04:00 – 09:30   'pre'
+        09:30 – 16:00   'regular'
+        16:00 – 04:00   'post'      (runs past midnight into the next morning)
+        weekends        'closed'    (no extended-hours print exists)
+
+    The 00:00–04:00 stretch belongs to the *previous* day's post session, so it
+    counts as 'post' only when that previous day was a weekday — Saturday's
+    small hours continue Friday's evening, Sunday's and Monday's do not.
+
+    Market holidays are not tracked; a holiday reads as whatever window the
+    clock falls in, which is harmless because no extended-hours quote exists
+    then and fetch_last_price() falls back to the regular price.
+    """
+    now = now or datetime.now(_MARKET_TZ)
+    hm  = now.time()
+    if hm < _PRE_OPEN:                       # after midnight, before 04:00
+        return 'post' if 1 <= now.weekday() <= 5 else 'closed'   # Tue–Sat
+    if now.weekday() >= 5:                   # Saturday / Sunday daytime
+        return 'closed'
+    if hm < _MARKET_OPEN:
+        return 'pre'
+    if hm < _MARKET_CLOSE:
+        return 'regular'
+    return 'post'
 
 
 def in_extended_hours(now: datetime | None = None) -> bool:
@@ -42,10 +103,7 @@ def in_extended_hours(now: datetime | None = None) -> bool:
     extended-hours quote exists then and fetch_last_price() falls back to the
     regular price with session=None.
     """
-    now = now or datetime.now(_MARKET_TZ)
-    if now.weekday() >= 5:            # Saturday / Sunday
-        return True
-    return not (_MARKET_OPEN <= now.time() < _MARKET_CLOSE)
+    return market_session(now) != 'regular'
 
 
 def _provider_name() -> str:
@@ -91,16 +149,22 @@ def fetch_last_price(symbol: str, use_extended: bool = False) -> tuple[float | N
         if info.get('success'):
             price, session = info.get('current_price'), None
             if use_extended:
-                for key, name in (('pre_market_price', 'pre'), ('post_market_price', 'post')):
-                    if info.get(key):
-                        price, session = info.get(key), name
-                        break
+                # Take only the price belonging to the session the clock is in.
+                # Providers keep reporting a field after its session ends — Yahoo
+                # still carries the morning's preMarketPrice all evening — so
+                # trusting whichever field is populated served a ~12-hour-stale
+                # quote after 16:00.  No price for the current session means no
+                # extended trading has printed: fall back to the regular price.
+                now_session = market_session()
+                key = _EXTENDED_PRICE_KEY.get(now_session)
+                if key and info.get(key):
+                    price, session = info.get(key), now_session
             if price and _valid_price(price):
                 return float(price), session
             if price is not None:
                 log.warning("fetch_last_price(%s): implausible price %s from %s",
                             symbol, price, provider_label)
-                _fetch_failures[symbol] = f"implausible price ({price}) from {provider_label}"
+                record_fetch_failure(symbol, f"implausible price ({price}) from {provider_label}")
                 return None, None
         # success=False or price=None: fall through to yfinance
     except ModuleNotFoundError:
@@ -122,17 +186,17 @@ def fetch_last_price(symbol: str, use_extended: bool = False) -> tuple[float | N
             price = float(df["Close"].iloc[-1]) if not df.empty else None
         if price is None:
             log.warning("fetch_last_price(%s): all methods returned None", symbol)
-            _fetch_failures[symbol] = f"no price data returned by {provider_label}"
+            record_fetch_failure(symbol, f"no price data returned by {provider_label}")
             return None, None
         if not _valid_price(price):
             log.warning("fetch_last_price(%s): implausible price %s — treating as unavailable",
                         symbol, price)
-            _fetch_failures[symbol] = f"implausible price ({price}) from {provider_label}"
+            record_fetch_failure(symbol, f"implausible price ({price}) from {provider_label}")
             return None, None
         return float(price), None
     except Exception as exc:
         log.warning("fetch_last_price(%s) failed: %s", symbol, exc)
-        _fetch_failures[symbol] = f"price fetch failed from {provider_label} ({type(exc).__name__})"
+        record_fetch_failure(symbol, f"price fetch failed from {provider_label} ({type(exc).__name__})")
         return None, None
 
 
@@ -150,8 +214,8 @@ def fetch_option_theoretical_price(symbol: str, expiration_iso: str,
     except Exception as exc:
         log.warning("fetch_option_theoretical_price(%s %s %s %s) failed: %s",
                     symbol, expiration_iso, strike, option_type, exc)
-        _fetch_failures.setdefault(
-            symbol, f"option data unavailable from {_provider_name()} ({type(exc).__name__})")
+        record_fetch_failure(
+            symbol, f"option data unavailable from {_provider_name()} ({type(exc).__name__})", overwrite=False)
         return None
 
 
@@ -169,8 +233,8 @@ def fetch_option_theta(symbol: str, expiration_iso: str,
     except Exception as exc:
         log.warning("fetch_option_theta(%s %s %s %s) failed: %s",
                     symbol, expiration_iso, strike, option_type, exc)
-        _fetch_failures.setdefault(
-            symbol, f"option data unavailable from {_provider_name()} ({type(exc).__name__})")
+        record_fetch_failure(
+            symbol, f"option data unavailable from {_provider_name()} ({type(exc).__name__})", overwrite=False)
         return None
 
 
@@ -190,8 +254,8 @@ def fetch_option_greeks(symbol: str, expiration_iso: str,
         result = get_provider().fetch_option_greeks(
             symbol, expiration_iso, strike, option_type, r=r, use_extended=use_extended)
         if all(v is None for v in result.values()):
-            _fetch_failures.setdefault(
-                symbol, f"option data unavailable from {_provider_name()}")
+            record_fetch_failure(
+                symbol, f"option data unavailable from {_provider_name()}", overwrite=False)
         return result
     except ModuleNotFoundError:
         log.debug("option_lib not available — greeks skipped for %s", symbol)
@@ -199,8 +263,8 @@ def fetch_option_greeks(symbol: str, expiration_iso: str,
     except Exception as exc:
         log.warning("fetch_option_greeks(%s %s %s %s) failed: %s",
                     symbol, expiration_iso, strike, option_type, exc)
-        _fetch_failures.setdefault(
-            symbol, f"option data unavailable from {_provider_name()} ({type(exc).__name__})")
+        record_fetch_failure(
+            symbol, f"option data unavailable from {_provider_name()} ({type(exc).__name__})", overwrite=False)
         return _none
 
 
@@ -230,6 +294,6 @@ def fetch_option_delta(symbol: str, expiration_iso: str,
     except Exception as exc:
         log.warning("fetch_option_delta(%s %s %s %s) failed: %s",
                     symbol, expiration_iso, strike, option_type, exc)
-        _fetch_failures.setdefault(
-            symbol, f"option data unavailable from {_provider_name()} ({type(exc).__name__})")
+        record_fetch_failure(
+            symbol, f"option data unavailable from {_provider_name()} ({type(exc).__name__})", overwrite=False)
         return None

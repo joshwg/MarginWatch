@@ -30,6 +30,8 @@ run() {
 
 run "risk balls"        tests/test_risk_balls.py
 run "config risk-free"  tests/test_config_risk_free.py
+run "market sessions"   tests/test_market_sessions.py
+run "concurrent fetch"  tests/test_concurrent_fetch.py
 
 echo "================================"
 echo "$passed suite(s) passed  $failed suite(s) failed"

@@ -8,6 +8,8 @@ let _confirmModal = null;
 let _progressPoller = null;    // interval handle for fetch-progress polling
 let _loadCtrl = null;          // AbortController for the in-flight loadPositions() (both phases)
 let _loadSeq  = 0;             // generation counter — only the newest load may touch the table
+let _sortQueued = false;       // sort changed mid-load: re-sort once the pull finishes
+let _lastFetchSymbol = '';     // symbol the progress poller last reported
 
 // ---------------------------------------------------------------------------
 // App-wide state
@@ -31,6 +33,15 @@ document.addEventListener('DOMContentLoaded', async () => {
         r.addEventListener('change', () => {
             _colSort = null;
             updateColHeaders();
+            // A price pull already running must not be thrown away — every
+            // symbol it has fetched would have to be fetched again. Queue the
+            // reload instead; loadPositions() reads the radio when it starts,
+            // so the drain picks up whatever is selected by then.
+            if (_loadCtrl) {
+                _sortQueued = true;
+                _setFetchStatus(_loadingLabel(_lastFetchSymbol));
+                return;
+            }
             loadPositions();
         })
     );
@@ -165,6 +176,11 @@ async function refreshPrices() {
 
 async function loadPositions() {
     const sort = document.querySelector('input[name="sort"]:checked').value;
+    // This load asks the server for whatever sort is selected right now, so any
+    // change queued before it started is already satisfied. Clearing here also
+    // keeps an unrelated reload (a delete, say) from being followed by a second,
+    // redundant one just to re-apply the same order.
+    _sortQueued = false;
 
     // Supersede whatever load is still running: abort its requests and take a
     // new generation number, so a reply already on the wire is discarded rather
@@ -182,6 +198,14 @@ async function loadPositions() {
     // finishing late would drop the newer one's controller and make it
     // un-abortable.
     const release = () => { if (isCurrent()) _loadCtrl = null; };
+    // Run a sort change that arrived while this load was in flight. Only the
+    // newest load drains: a superseded one returns early and leaves the queue
+    // for whichever load took over, so the sort is applied exactly once.
+    const drain = () => {
+        if (!isCurrent() || !_sortQueued) return;
+        _sortQueued = false;
+        loadPositions();
+    };
 
     // ── Phase 1: positions from the database (fast) ──────────────────────────
     try {
@@ -198,6 +222,7 @@ async function loadPositions() {
         if (e.name === 'AbortError') return;  // superseded — silent
         console.error('[MarginWatch] loadPositions failed:', e);
         _setFetchStatus(`⚠ Load failed: ${e.message || e}`, true);
+        drain();   // a queued sort must not be stranded by a failed load
         return;
     }
     renderTable();   // show the table immediately with whatever is cached
@@ -227,15 +252,25 @@ async function loadPositions() {
         console.error('[MarginWatch] price fetch failed:', e);
         _stopProgressPolling();
         _setFetchStatus(`⚠ Price fetch failed: ${e.message || e}`, true);
+        drain();   // a queued sort must not be stranded by a failed fetch
         return;
     }
     _stopProgressPolling();
     renderTable();   // re-render with live prices filled in
     _refreshTooltipText();   // a hover-triggered refresh updates the open tooltip
+    drain();         // prices are in — now apply any sort that arrived meanwhile
+}
+
+/** Progress text: the symbol being fetched, plus a note when a sort change is
+ *  waiting on this pull so the user knows the click was not swallowed. */
+function _loadingLabel(symbol) {
+    return (symbol ? `Loading ${symbol}…` : 'Loading…') +
+           (_sortQueued ? '  (re-sorting when done)' : '');
 }
 
 function _startProgressPolling() {
-    _setFetchStatus('Loading…');
+    _lastFetchSymbol = '';
+    _setFetchStatus(_loadingLabel(''));
     if (_progressPoller) clearInterval(_progressPoller);
     _progressPoller = setInterval(async () => {
         // Snapshot the handle so we can detect if the poller was stopped while
@@ -246,21 +281,24 @@ function _startProgressPolling() {
             if (!r.ok || _progressPoller !== handle) return;
             const { symbol } = await r.json();
             if (_progressPoller !== handle) return;   // stopped while parsing JSON
-            _setFetchStatus(symbol ? `Loading ${symbol}…` : 'Loading…');
+            _lastFetchSymbol = symbol || '';
+            _setFetchStatus(_loadingLabel(_lastFetchSymbol));
         } catch { /* ignore poll errors */ }
     }, 300);
 }
 
 function _stopProgressPolling() {
     if (_progressPoller) { clearInterval(_progressPoller); _progressPoller = null; }
+    _lastFetchSymbol = '';
     _setFetchStatus('');
 }
 
 function _setFetchStatus(msg, isError = false) {
     const el = document.getElementById('fetchStatus');
     if (!el) return;
+    // The line keeps its height when empty (see .mw-status-line) — never hide
+    // it, or the table below shifts every time a load starts and finishes.
     el.textContent = msg;
-    el.classList.toggle('d-none', !msg);
     el.classList.toggle('text-danger', isError);
     el.classList.toggle('text-muted', !isError);
 }
@@ -413,7 +451,7 @@ function renderTable() {
         const thetaNormCell = mkTd(pos.theta_norm != null ? pos.theta_norm.toFixed(1) : '—', 'text-end');
 
         const actCell = document.createElement('td');
-        actCell.className = 'text-center';
+        actCell.className = 'text-center mw-actions-cell';
 
         const editBtn = mkRowBtn(ICON_EDIT,   () => editPosition(pos.id));
         const delBtn  = mkRowBtn(ICON_DELETE, () => deletePosition(pos.id));
