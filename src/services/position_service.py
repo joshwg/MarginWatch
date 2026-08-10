@@ -177,6 +177,43 @@ def margin_k(pos: Position) -> float:
 # Display helpers
 # ---------------------------------------------------------------------------
 
+# Plausibility bounds for an option price per share.  The binomial model blows
+# up on degenerate inputs (a stale or missing underlying, a zero-vol chain), and
+# the result is a number with no meaning — no listed contract we track is worth
+# four figures a share.  Rather than print a precise-looking fiction, say only
+# as much as is true: past the first bound the quote is merely out of range,
+# past the second there is nothing left worth reporting.
+OPT_PRICE_MAX    =  1_000.0   # above this the quote is not believable
+OPT_PRICE_ABSURD = 10_000.0   # above this not even a bound is meaningful
+
+
+def format_opt_price(value) -> str:
+    """Format an option price per share for the $/shr column.
+
+    Returns '—' when unknown, '<OPT_PRICE_MAX>+' when implausibly large, and
+    'n/a' when the value is so far out that even a bound would mislead.  The cap
+    in the text is rendered from the constant, so moving the bound moves the
+    label with it.  Magnitude decides, so a nonsense *negative* spread net is
+    caught the same way.
+    """
+    if value is None:
+        return "—"
+    if abs(value) >= OPT_PRICE_ABSURD:
+        return "n/a"
+    if abs(value) > OPT_PRICE_MAX:
+        return f"{'-' if value < 0 else ''}{OPT_PRICE_MAX:,.0f}+"
+    return f"{value:.2f}"
+
+
+def plausible_opt_price(value) -> bool:
+    """True when *value* is a believable option price per share.
+
+    Callers use this to suppress anything derived from an unbelievable quote
+    (the ITM badge's time-value split, say) instead of passing the nonsense on.
+    """
+    return value is not None and abs(value) <= OPT_PRICE_MAX
+
+
 def position_abbrev(pos: Position) -> str:
     """Return the display abbreviation for a position."""
     sym = pos.symbol

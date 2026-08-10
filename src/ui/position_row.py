@@ -26,13 +26,13 @@ def compute_display(pos: Position, cache: CacheService) -> dict:
         long_opt = cache.opt_price(long_key)
         long_theta = cache.theta(long_key)
         net_opt = (opt_price - long_opt) if (opt_price is not None and long_opt is not None) else None
-        opt_str = f"{net_opt:.2f}" if net_opt is not None else "—"
+        opt_str = ps.format_opt_price(net_opt)
         td = ps.theta_dollars(pos, theta, long_theta)
         short_line, long_line = ps.spread_leg_abbrevs(pos)
         short_line, long_line = (short_line, long_line) if ps.is_credit_spread(pos) else (long_line, short_line)
     else:
         long_line = None
-        opt_str = f"{opt_price:.2f}" if opt_price is not None else "—"
+        opt_str = ps.format_opt_price(opt_price)
         td = ps.theta_dollars(pos, theta)
         short_line = ps.position_abbrev(pos)
 

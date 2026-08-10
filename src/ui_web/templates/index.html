@@ -70,6 +70,7 @@
       <thead class="table-light">
         <tr>
           <th class="sortable" data-col="position">Position</th>
+          <th class="sortable mw-sector-col" data-col="sector">Sector</th>
           <th class="sortable text-center" data-col="qty">#</th>
           <th class="sortable text-end" data-col="margin">Margin</th>
           <th class="sortable text-end" data-col="opt">$/shr</th>
@@ -79,14 +80,17 @@
         </tr>
       </thead>
       <tbody id="positionsBody">
-        <tr><td colspan="6" class="text-center text-muted py-3">Loading&hellip;</td></tr>
+        <tr><td colspan="7" class="text-center text-muted py-3">Loading&hellip;</td></tr>
       </tbody>
     </table>
   </div>
 
   <!-- Config card -->
   <div class="card mt-3">
-    <div class="card-header py-1 small fw-semibold">Configuration</div>
+    <div class="card-header py-1 small fw-semibold d-flex justify-content-between align-items-center">
+      <span>Configuration</span>
+      <span class="fw-normal text-muted">v{{ version }}</span>
+    </div>
     <div class="card-body py-2">
       <div class="row g-2 align-items-center">
         <div class="col-auto">

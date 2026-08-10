@@ -32,6 +32,19 @@
 /* Actions column width */
 .mw-actions-col { width: 76px; }
 
+/* Sector column. Muted and narrow — it is context for scanning concentration
+   across the book, not a number anyone reads row by row. Labels are already
+   abbreviated (see SECTOR_ABBREV); ellipsis catches any that still overrun. */
+.mw-sector-col {
+    width: 72px;
+    max-width: 72px;
+    font-size: 0.78rem;
+    opacity: 0.8;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
 /* Row action buttons */
 .mw-row-btn { font-size: 11px; touch-action: manipulation; }
 

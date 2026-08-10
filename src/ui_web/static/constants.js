@@ -81,3 +81,34 @@ function riskColor(delta) {
         if (delta >= band.threshold) return band.color;
     }
 }
+
+// ── Sectors ──────────────────────────────────────────────────────────────────
+//
+// Yahoo's eleven sector names, shortened to fit a dense table column.  Names
+// like "Communication Services" would otherwise set the column's width on their
+// own; the cell carries the full name as its title attribute.
+
+const SECTOR_ABBREV = {
+    'Basic Materials':        'Materials',
+    'Communication Services': 'Comm',
+    'Consumer Cyclical':      'Cons Cyc',
+    'Consumer Defensive':     'Cons Def',
+    'Energy':                 'Energy',
+    'Financial Services':     'Financial',
+    'Healthcare':             'Health',
+    'Industrials':            'Industrial',
+    'Real Estate':            'Real Est',
+    'Technology':             'Tech',
+    'Utilities':              'Utilities',
+};
+
+/**
+ * Short display label for a sector.  ETFs and indices have no sector, and a
+ * symbol whose lookup has not landed yet is also null — both show as a dash.
+ * Anything outside the known eleven passes through unshortened rather than
+ * being dropped, so a vocabulary change shows up instead of vanishing.
+ */
+function sectorLabel(sector) {
+    if (!sector) return '—';
+    return SECTOR_ABBREV[sector] || sector;
+}

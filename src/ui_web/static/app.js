@@ -347,6 +347,15 @@ function updateSummary(s) {
 // Table rendering
 // ---------------------------------------------------------------------------
 
+/** Sort key for the $/shr column.
+ *  The capped label carries a thousands separator, which parseFloat truncates
+ *  at ("1,000+" would read as 1), so strip the commas first.  '—' and 'n/a'
+ *  have no numeric value and sort to the bottom. */
+function _optSortValue(optStr) {
+    const n = parseFloat(String(optStr).replace(/,/g, ''));
+    return isNaN(n) ? -Infinity : n;
+}
+
 function renderTable() {
     let items = [..._positions];
 
@@ -355,10 +364,13 @@ function renderTable() {
         items.sort((a, b) => {
             let va, vb;
             if      (col === 'position')   { va = a.abbrev;       vb = b.abbrev; }
+            // Unknown sectors group together at the end rather than under ''.
+            else if (col === 'sector')     { va = a.sector || '￿';
+                                             vb = b.sector || '￿'; }
             else if (col === 'qty')        { va = a.qty;          vb = b.qty; }
             else if (col === 'margin')     { va = a.margin;       vb = b.margin; }
-            else if (col === 'opt')        { va = parseFloat(a.opt_str) || -Infinity;
-                                             vb = parseFloat(b.opt_str) || -Infinity; }
+            else if (col === 'opt')        { va = _optSortValue(a.opt_str);
+                                             vb = _optSortValue(b.opt_str); }
             else if (col === 'theta')      { va = a.theta_dollars ?? -Infinity;
                                              vb = b.theta_dollars ?? -Infinity; }
             else if (col === 'theta_norm') { va = a.theta_norm ?? -Infinity;
@@ -375,7 +387,7 @@ function renderTable() {
 
     if (items.length === 0) {
         tbody.innerHTML =
-            '<tr><td colspan="6" class="text-center text-muted py-3">No open positions.</td></tr>';
+            '<tr><td colspan="7" class="text-center text-muted py-3">No open positions.</td></tr>';
         return;
     }
 
@@ -397,9 +409,7 @@ function renderTable() {
         }
 
         if (pos.itm) {
-            const dot = mkIndBadge('mw-ind mw-ind-itm', 'I', pos.itm_amount != null
-                ? `ITM $${pos.itm_amount.toFixed(2)}`
-                : 'In the money');
+            const dot = mkIndBadge('mw-ind mw-ind-itm', 'I', _itmBadgeText(pos));
             // Yellow when barely ITM (< $1 or < 3% of strike) — close to the edge.
             // Green for covered calls clearly ITM (profitable assignment likely).
             // Red for short options clearly ITM (losing position).
@@ -413,7 +423,11 @@ function renderTable() {
             if (pos.itm_amount != null) {
                 const lbl = document.createElement('span');
                 lbl.className = 'mw-itm-inline';
-                lbl.textContent = `[${pos.itm_amount.toFixed(2)}]`;
+                // intrinsic + time value, e.g. [5.00+1.20]
+                lbl.textContent = pos.time_premium != null
+                    ? `[${pos.itm_amount.toFixed(2)}${pos.time_premium < 0 ? '−' : '+'}` +
+                      `${Math.abs(pos.time_premium).toFixed(2)}]`
+                    : `[${pos.itm_amount.toFixed(2)}]`;
                 posCell.appendChild(lbl);
             }
         }
@@ -444,6 +458,10 @@ function renderTable() {
             posCell.appendChild(line2);
         }
 
+        // Full name in the title so the narrow column can abbreviate freely.
+        const sectorCell = mkTd(sectorLabel(pos.sector), 'mw-sector-col');
+        if (pos.sector) sectorCell.title = pos.sector;
+
         const qtyCell    = mkTd(pos.qty,                   'text-center');
         const marginCell = mkTd(pos.margin.toFixed(1),     'text-end');
         const optCell    = mkTd(pos.opt_str,               'text-end');
@@ -463,7 +481,7 @@ function renderTable() {
             actCell.appendChild(mergeBtn);
         }
 
-        tr.append(posCell, qtyCell, marginCell, optCell, thetaCell, thetaNormCell, actCell);
+        tr.append(posCell, sectorCell, qtyCell, marginCell, optCell, thetaCell, thetaNormCell, actCell);
         _addRowInteractions(tr, pos);
         tbody.appendChild(tr);
     }
@@ -518,6 +536,19 @@ function _tooltipText(pos) {
     const suffix = pos.price_session === 'pre' ? ' (pre)'
                   : pos.price_session === 'post' ? ' (post)' : '';
     return `${pos.symbol} $${pos.price.toFixed(2)}${suffix}`;
+}
+
+/** Label for the ITM badge: how much of the short leg's premium is intrinsic
+ *  (the ITM amount) and how much is still time value.  Both are per share.
+ *  Time value goes negative on deep ITM American options trading under parity,
+ *  so the sign is carried on the number rather than assumed positive. */
+function _itmBadgeText(pos) {
+    if (pos.itm_amount == null) return 'In the money';
+    const itm = `ITM $${pos.itm_amount.toFixed(2)}`;
+    if (pos.time_premium == null) return itm;
+    const t = pos.time_premium;
+    const sign = t < 0 ? '−' : '';
+    return `${itm} · time ${sign}$${Math.abs(t).toFixed(2)}`;
 }
 
 /** Rewrite a visible tooltip after a refresh, so a hover that triggered the
@@ -639,7 +670,8 @@ function mkRowBtn(label, handler) {
 
 function updateColHeaders() {
     const labels = {
-        position: 'Position', qty: '#', margin: 'Margin', opt: '$/shr', theta: 'Theta', theta_norm: 'θ/10k',
+        position: 'Position', sector: 'Sector', qty: '#', margin: 'Margin',
+        opt: '$/shr', theta: 'Theta', theta_norm: 'θ/10k',
     };
     document.querySelectorAll('#positionsTable thead th.sortable').forEach(th => {
         const col = th.dataset.col;

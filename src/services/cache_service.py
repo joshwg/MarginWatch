@@ -46,6 +46,8 @@ class CacheService:
         self._theta: dict[tuple, float | None] = {}
         self._delta: dict[tuple, float | None] = {}
         self._earnings: dict[str, str | None] = {}
+        # Not cleared by a session rollover — a sector has nothing to do with price.
+        self._sector: dict[str, str | None] = {}
         # symbol → short error description; persists until cache is reset
         self._failed: dict[str, str] = {}
         # Human-readable status of the in-progress fetch ("AAPL", "TSLA options", …)
@@ -129,6 +131,7 @@ class CacheService:
         self._theta     = {k: v for k, v in self._theta.items()     if k[0] != symbol}
         self._delta     = {k: v for k, v in self._delta.items()     if k[0] != symbol}
         self._earnings.pop(symbol, None)
+        self._sector.pop(symbol, None)
 
     def fetch_all(self, positions: list[Position]) -> None:
         """Fetch any missing prices and greeks for all positions.
@@ -236,6 +239,20 @@ class CacheService:
                 self._earnings[symbol] = mds.fetch_earnings_date(symbol)
             return self._earnings.get(symbol)
 
+    def sector(self, symbol: str) -> str | None:
+        return self._sector.get(symbol)
+
+    def fetch_sector(self, symbol: str) -> str | None:
+        """Return the sector, fetching if not yet cached this session.
+
+        Membership, not truthiness, decides: None is the right answer for an
+        ETF, and re-asking every pass would spend a lookup to learn that again.
+        """
+        with self._symbol_lock(symbol):
+            if symbol not in self._sector:
+                self._sector[symbol] = mds.fetch_sector(symbol)
+            return self._sector.get(symbol)
+
     # ------------------------------------------------------------------
     # Private fetchers
     # ------------------------------------------------------------------
@@ -245,6 +262,7 @@ class CacheService:
             self.current_fetch = sym
             self.fetch_price(sym)
             self.fetch_earnings_date(sym)   # cached after the first call
+            self.fetch_sector(sym)          # disk-cached in option_lib for a month
         self.current_fetch = ""
 
     def _fetch_greeks(self, positions: list[Position]) -> None:

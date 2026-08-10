@@ -1,6 +1,15 @@
 """Application-wide constants: domain sentinel values and UI theme colors."""
 
 # ---------------------------------------------------------------------------
+# Version
+# ---------------------------------------------------------------------------
+
+# The single source of truth.  MarginWatch is run from source rather than pip
+# installed, so there is no package metadata to read this from — both the web
+# and desktop UIs import it from here.
+__version__ = "1.0.0"
+
+# ---------------------------------------------------------------------------
 # Domain
 # ---------------------------------------------------------------------------
 

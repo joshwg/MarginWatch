@@ -27,7 +27,16 @@ _MARKET_CLOSE = _time(16, 0)
 # purpose: the last after-hours print stays the best available quote overnight.
 _PRE_OPEN     = _time(4, 0)
 
-# Session → the provider field holding that session's price.
+# Which price basis each clock session uses: pre-market hours show the
+# pre-market print, regular hours the regular one, and every other hour the
+# post-market print.  'closed' — the weekend, and Monday before 04:00 — maps to
+# 'post' because no trade happens in that window, so Friday's last after-hours
+# print is still the freshest quote there is.  Falling back to the regular close
+# would discard every after-hours move across the weekend, which is exactly when
+# news tends to land.  Mirrors option_lib.math_util.SESSION_BASIS.
+_SESSION_BASIS = {'pre': 'pre', 'regular': None, 'post': 'post', 'closed': 'post'}
+
+# Price basis → the get_stock_info() field holding it.
 _EXTENDED_PRICE_KEY = {'pre': 'pre_market_price', 'post': 'post_market_price'}
 
 # Fetch-failure tracking: each failed symbol maps to a short human-readable
@@ -149,16 +158,16 @@ def fetch_last_price(symbol: str, use_extended: bool = False) -> tuple[float | N
         if info.get('success'):
             price, session = info.get('current_price'), None
             if use_extended:
-                # Take only the price belonging to the session the clock is in.
+                # Take only the price belonging to the basis the clock calls for.
                 # Providers keep reporting a field after its session ends — Yahoo
                 # still carries the morning's preMarketPrice all evening — so
                 # trusting whichever field is populated served a ~12-hour-stale
-                # quote after 16:00.  No price for the current session means no
-                # extended trading has printed: fall back to the regular price.
-                now_session = market_session()
-                key = _EXTENDED_PRICE_KEY.get(now_session)
+                # quote after 16:00.  An empty field means no extended trading
+                # has printed: fall back to the regular price.
+                basis = _SESSION_BASIS.get(market_session())
+                key = _EXTENDED_PRICE_KEY.get(basis)
                 if key and info.get(key):
-                    price, session = info.get(key), now_session
+                    price, session = info.get(key), basis
             if price and _valid_price(price):
                 return float(price), session
             if price is not None:
@@ -266,6 +275,24 @@ def fetch_option_greeks(symbol: str, expiration_iso: str,
         record_fetch_failure(
             symbol, f"option data unavailable from {_provider_name()} ({type(exc).__name__})", overwrite=False)
         return _none
+
+
+def fetch_sector(symbol: str) -> str | None:
+    """Return the symbol's sector (e.g. 'Technology'), or None if it has none.
+
+    option_lib caches this on disk for a month, so this is a network call at
+    most once per symbol per month across every process on the machine — no
+    local caching beyond CacheService's per-session dict is warranted.
+    """
+    try:
+        from option_lib.data_provider import get_provider
+        return get_provider().get_sector(symbol)
+    except ModuleNotFoundError:
+        _warn_missing_option_lib()
+        return None
+    except Exception as exc:
+        log.warning("fetch_sector(%s) failed: %s", symbol, exc)
+        return None
 
 
 def fetch_earnings_date(symbol: str) -> str | None:

@@ -387,9 +387,87 @@ def test_option_lib_greeks_use_current_session_underlying():
                            (et(17, 0), POST_PRICE),
                            (et(2, 0),  POST_PRICE),
                            (et(6, 0),  PRE_PRICE),
-                           (et(12, 0, SAT), REGULAR_PRICE)]:
+                           # Weekend: no trade has happened since Friday's last
+                           # after-hours print, so that print is still S.
+                           (et(12, 0, SAT), POST_PRICE)]:
         got = ol_extended_underlying(info, when)
         assert got == expected, f"{when.strftime('%a %H:%M')} ET priced greeks off {got}, expected {expected}"
+
+
+# ---------------------------------------------------------------------------
+# 14: the whole clock, against the stated rule
+# ---------------------------------------------------------------------------
+
+# The rule, in full: pre-market hours show the pre-market price, market hours
+# show the market price, and *every other hour* shows the post-market price.
+# The last clause is what makes the weekend a post-market window rather than a
+# regular one — there is no trade after Friday's last after-hours print, so that
+# print stays the freshest quote right through to Monday's pre-market.
+#
+# Both repos implement this independently (MarginWatch works without option_lib
+# installed), so every row is asserted against both.
+_PRICE_BASIS_CLOCK = [
+    # Weekday pre-market
+    (et(4, 0),        PRE_PRICE,     'pre'),
+    (et(6, 30),       PRE_PRICE,     'pre'),
+    (et(9, 29),       PRE_PRICE,     'pre'),
+    # Weekday regular session
+    (et(9, 30),       REGULAR_PRICE, None),
+    (et(12, 0),       REGULAR_PRICE, None),
+    (et(15, 59),      REGULAR_PRICE, None),
+    # Weekday after-hours, running past midnight into the small hours
+    (et(16, 0),       POST_PRICE,    'post'),
+    (et(20, 0),       POST_PRICE,    'post'),
+    (et(23, 59),      POST_PRICE,    'post'),
+    (et(0, 1),        POST_PRICE,    'post'),
+    (et(3, 59),       POST_PRICE,    'post'),
+    # The weekend, start to finish
+    (et(2, 0,  SAT),  POST_PRICE,    'post'),   # continues Friday evening
+    (et(12, 0, SAT),  POST_PRICE,    'post'),
+    (et(23, 0, SAT),  POST_PRICE,    'post'),
+    (et(2, 0,  SUN),  POST_PRICE,    'post'),
+    (et(12, 0, SUN),  POST_PRICE,    'post'),
+    (et(23, 0, SUN),  POST_PRICE,    'post'),
+]
+
+
+def test_price_basis_across_the_clock():
+    """Pre in pre-market, regular in market hours, post at every other time."""
+    for when, expected_price, expected_session in _PRICE_BASIS_CLOCK:
+        label = when.strftime('%a %H:%M')
+        price, session = price_at(when, pre=PRE_PRICE, post=POST_PRICE)
+        assert price == expected_price, \
+            f"{label} ET showed {price}, expected {expected_price}"
+        assert session == expected_session, \
+            f"{label} ET reported session {session!r}, expected {expected_session!r}"
+
+
+def test_option_lib_agrees_on_price_basis():
+    """option_lib picks the same S as MarginWatch shows, at every hour."""
+    require_option_lib()
+    info = {'current_price':     REGULAR_PRICE,
+            'pre_market_price':  PRE_PRICE,
+            'post_market_price': POST_PRICE}
+    for when, expected_price, _ in _PRICE_BASIS_CLOCK:
+        got = ol_extended_underlying(info, when)
+        assert got == expected_price, \
+            f"{when.strftime('%a %H:%M')} ET: option_lib priced off {got}, " \
+            f"expected {expected_price}"
+
+
+def test_missing_price_for_the_hour_falls_back_to_regular():
+    """The rule picks a field; an empty field still falls back to the regular price.
+
+    A provider reports nothing for a session in which nothing traded — a stock
+    with no pre-market interest, or a weekend after a quiet Friday close.  That
+    must not leave the row blank.
+    """
+    for when in (et(6, 30), et(20, 0), et(12, 0, SAT), et(12, 0, SUN)):
+        price, session = price_at(when)          # neither pre nor post supplied
+        assert price == REGULAR_PRICE, \
+            f"{when.strftime('%a %H:%M')} ET returned {price} with no extended print"
+        assert session is None, \
+            f"{when.strftime('%a %H:%M')} ET claimed session {session!r} with no print"
 
 
 def test_option_lib_greeks_ignore_other_session_price():
@@ -425,6 +503,9 @@ if __name__ == '__main__':
         test_post_to_pre_turnover_clears_cached_price,
         test_option_lib_agrees_on_session,
         test_option_lib_greeks_use_current_session_underlying,
+        test_price_basis_across_the_clock,
+        test_option_lib_agrees_on_price_basis,
+        test_missing_price_for_the_hour_falls_back_to_regular,
         test_option_lib_greeks_ignore_other_session_price,
     ]
 

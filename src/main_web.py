@@ -91,7 +91,7 @@ def _compute_display(pos: Position, cache: CacheService) -> dict:
         call_theta = cache.theta(call_key)
         put_theta  = cache.theta(put_key)
         net_opt = (call_opt + put_opt) if (call_opt is not None and put_opt is not None) else None
-        opt_str = f"{net_opt:.2f}" if net_opt is not None else "—"
+        opt_str = ps.format_opt_price(net_opt)
         if call_theta is not None and put_theta is not None:
             td = (-call_theta - put_theta) * 100 * pos.quantity
         elif call_theta is not None:
@@ -106,6 +106,16 @@ def _compute_display(pos: Position, cache: CacheService) -> dict:
         put_delta  = cache.delta(put_key)
         deltas = [d for d in (call_delta, put_delta) if d is not None]
         delta = max(deltas) if deltas else None
+        # Only one leg of a straddle can be ITM; that leg's price is the one the
+        # ITM badge's intrinsic/time split refers to.
+        if price is None:
+            itm_leg_opt = None
+        elif price > pos.strike:
+            itm_leg_opt = call_opt
+        elif put_strike is not None and price < put_strike:
+            itm_leg_opt = put_opt
+        else:
+            itm_leg_opt = None
 
     else:
         ot = ps.pricing_option_type(pos)
@@ -118,17 +128,20 @@ def _compute_display(pos: Position, cache: CacheService) -> dict:
             long_opt = cache.opt_price(long_key)
             long_theta = cache.theta(long_key)
             net_opt = (opt_price - long_opt) if (opt_price is not None and long_opt is not None) else None
-            opt_str = f"{net_opt:.2f}" if net_opt is not None else "—"
+            opt_str = ps.format_opt_price(net_opt)
             td = ps.theta_dollars(pos, theta, long_theta)
             short_line, long_line = ps.spread_leg_abbrevs(pos)
             abbrev, abbrev2 = (short_line, long_line) if ps.is_credit_spread(pos) else (long_line, short_line)
         else:
             abbrev2 = None
-            opt_str = f"{opt_price:.2f}" if opt_price is not None else "—"
+            opt_str = ps.format_opt_price(opt_price)
             td = ps.theta_dollars(pos, theta)
             abbrev = ps.position_abbrev(pos)
 
         delta = cache.delta(key) if pos.strike else None
+        # The ITM badge always describes the short leg, so its price — not the
+        # spread's net — is what the intrinsic/time split is taken from.
+        itm_leg_opt = opt_price
 
     days = ps.days_to_expiry(pos)
     bg = styles.expiry_color(days)
@@ -142,6 +155,15 @@ def _compute_display(pos: Position, cache: CacheService) -> dict:
         except ValueError:
             pass
 
+    # Intrinsic and extrinsic halves of the ITM leg's premium, per share.  A
+    # small negative time value is real — deep ITM American options trade at or
+    # just under parity — so it is reported rather than clamped to zero.
+    # An implausible leg price makes the split meaningless too, so drop it
+    # rather than report a time value derived from a blown-up quote.
+    itm_amt = ps.itm_amount(pos, price)
+    time_prem = (round(itm_leg_opt - itm_amt, 2)
+                 if ps.plausible_opt_price(itm_leg_opt) and itm_amt is not None else None)
+
     return {
         "abbrev": abbrev,
         "abbrev2": abbrev2,
@@ -150,7 +172,8 @@ def _compute_display(pos: Position, cache: CacheService) -> dict:
         "bg": bg,
         "fg": styles.text_color(bg),
         "itm": ps.is_itm(pos, price),
-        "itm_amount": ps.itm_amount(pos, price),
+        "itm_amount": itm_amt,
+        "time_premium": time_prem,
         "opt_str": opt_str,
         "theta_dollars": td,
         "theta_str": f"${round(td):,d}" if td is not None else "—",
@@ -266,7 +289,7 @@ def favicon():
 
 @app.route("/")
 def index():
-    return render_template("index.html")
+    return render_template("index.html", version=constants.__version__)
 
 
 # ---------------------------------------------------------------------------
@@ -356,6 +379,9 @@ def api_positions():
         items.append({
             "id": pos.id,
             "symbol": pos.symbol,
+            # Warm only — phase 1 never fetches, so this is None until the
+            # prefetch or a /api/prices pass has run.  See api_prices().
+            "sector": _cache.sector(pos.symbol),
             "price": round(stock_price, 2) if stock_price is not None else None,
             "price_session": _cache.price_session(pos.symbol),
             "price_age_s": _cache.price_age(pos.symbol),
@@ -375,6 +401,7 @@ def api_positions():
             "fg": display["fg"],
             "itm": display["itm"],
             "itm_amount": display["itm_amount"],
+            "time_premium": display["time_premium"],
             "opt_str": display["opt_str"],
             "theta_str": display["theta_str"],
             "theta_dollars": display["theta_dollars"],
@@ -423,12 +450,17 @@ def api_prices():
             total_theta_day += display["theta_dollars"]
         stock_price = _cache.price(pos.symbol)
         updates[pos.id] = {
+            # Resent every pass even though it never changes: on a cold start
+            # phase 1 had nothing to send, and this is the only payload that
+            # runs after the fetch.  It is one short string per row.
+            "sector":        _cache.sector(pos.symbol),
             "price":         round(stock_price, 2) if stock_price is not None else None,
             "price_session": _cache.price_session(pos.symbol),
             "price_age_s":   _cache.price_age(pos.symbol),
             "price_extended": _cache.price_extended(pos.symbol),
             "itm":           display["itm"],
             "itm_amount":    display["itm_amount"],
+            "time_premium":  display["time_premium"],
             "opt_str":       display["opt_str"],
             "theta_str":     display["theta_str"],
             "theta_dollars": display["theta_dollars"],

@@ -23,7 +23,7 @@ class MarginWatchApp(tk.Tk):
     def __init__(self):
         print("Starting...")
         super().__init__()
-        self.title("MarginWatch")
+        self.title(f"MarginWatch {constants.__version__}")
         self.geometry("504x800")
         self.resizable(False, False)
 
@@ -328,9 +328,12 @@ class MarginWatchApp(tk.Tk):
                 if col == "margin":
                     return (0, disp["margin"])
                 if col == "opt":
+                    # A capped price ("1,000+") still sorts at its bound; strip
+                    # the separator and marker so it lands there rather than in
+                    # the unsortable bucket with "n/a" and "—".
                     try:
-                        return (0, float(disp["opt_str"]))
-                    except (ValueError, TypeError):
+                        return (0, float(disp["opt_str"].replace(",", "").rstrip("+")))
+                    except (ValueError, TypeError, AttributeError):
                         return (1, 0.0)
                 if col == "theta":
                     td = disp["theta_dollars"]
