@@ -13,6 +13,16 @@ from zoneinfo import ZoneInfo
 
 log = logging.getLogger(__name__)
 
+# Name this app to option_lib's disk caches (sectors, names), which are shared
+# with the sibling apps through OPTION_LIB_CACHE_DIR.  Only this app's scratch
+# file is named for it; the cached sectors themselves are common to all.
+# option_lib stays an optional dependency here, as everywhere else in this file.
+try:
+    from option_lib.disk_cache import set_app_tag as _set_app_tag
+    _set_app_tag("margin")
+except ImportError:
+    pass
+
 # Sanity bounds for a stock price.  Anything outside [_PRICE_MIN, _PRICE_MAX]
 # is treated as a data error and discarded.
 _PRICE_MIN =       0.01   # nothing trades below a penny
@@ -292,6 +302,24 @@ def fetch_sector(symbol: str) -> str | None:
         return None
     except Exception as exc:
         log.warning("fetch_sector(%s) failed: %s", symbol, exc)
+        return None
+
+
+def fetch_company_name(symbol: str) -> str | None:
+    """Return the company's display name (e.g. 'Apple Inc.'), or None.
+
+    Cached on disk by option_lib on the same terms as the sector, so this costs
+    a network call at most once per symbol per month across every process on
+    the machine.
+    """
+    try:
+        from option_lib.data_provider import get_provider
+        return get_provider().get_company_name(symbol)
+    except ModuleNotFoundError:
+        _warn_missing_option_lib()
+        return None
+    except Exception as exc:
+        log.warning("fetch_company_name(%s) failed: %s", symbol, exc)
         return None
 
 

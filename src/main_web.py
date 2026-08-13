@@ -382,6 +382,7 @@ def api_positions():
             # Warm only — phase 1 never fetches, so this is None until the
             # prefetch or a /api/prices pass has run.  See api_prices().
             "sector": _cache.sector(pos.symbol),
+            "company_name": _cache.company_name(pos.symbol),
             "price": round(stock_price, 2) if stock_price is not None else None,
             "price_session": _cache.price_session(pos.symbol),
             "price_age_s": _cache.price_age(pos.symbol),
@@ -454,6 +455,7 @@ def api_prices():
             # phase 1 had nothing to send, and this is the only payload that
             # runs after the fetch.  It is one short string per row.
             "sector":        _cache.sector(pos.symbol),
+            "company_name":  _cache.company_name(pos.symbol),
             "price":         round(stock_price, 2) if stock_price is not None else None,
             "price_session": _cache.price_session(pos.symbol),
             "price_age_s":   _cache.price_age(pos.symbol),

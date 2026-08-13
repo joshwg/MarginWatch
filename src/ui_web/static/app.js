@@ -387,7 +387,7 @@ function renderTable() {
 
     if (items.length === 0) {
         tbody.innerHTML =
-            '<tr><td colspan="7" class="text-center text-muted py-3">No open positions.</td></tr>';
+            '<tr><td colspan="8" class="text-center text-muted py-3">No open positions.</td></tr>';
         return;
     }
 
@@ -397,8 +397,11 @@ function renderTable() {
         tr.style.backgroundColor = pos.bg;
         tr.style.color = pos.fg;
 
-        // Position cell: optional indicator swatches + name
+        // Position cell: optional indicator swatches + name.  Classed so the
+        // tooltip handler can tell it apart — it is the one column that shows
+        // the company name rather than the underlier price.
         const posCell = document.createElement('td');
+        posCell.className = 'mw-position-cell';
 
         // Risk indicator: coloured ball showing probability of assignment
         const rc = riskColor(pos.delta);
@@ -449,6 +452,9 @@ function renderTable() {
         }
         const nameSpan = document.createElement('span');
         nameSpan.textContent = pos.abbrev;
+        // The company name is shown by the cell's tooltip, not by a native
+        // title here: a title would fire on top of the cell tooltip and put two
+        // overlapping popups on screen saying different things.
         if (pos.is_stock_row) nameSpan.className = 'mw-stock-pos';
         posCell.appendChild(nameSpan);
         if (pos.abbrev2) {
@@ -458,9 +464,10 @@ function renderTable() {
             posCell.appendChild(line2);
         }
 
-        // Full name in the title so the narrow column can abbreviate freely.
+        // No native title with the unabbreviated sector: this column is one of
+        // the six that show the price, and a title would stack a second popup
+        // on top of that one.
         const sectorCell = mkTd(sectorLabel(pos.sector), 'mw-sector-col');
-        if (pos.sector) sectorCell.title = pos.sector;
 
         const qtyCell    = mkTd(pos.qty,                   'text-center');
         const marginCell = mkTd(pos.margin.toFixed(1),     'text-end');
@@ -488,12 +495,39 @@ function renderTable() {
 }
 
 // ---------------------------------------------------------------------------
-// Position tooltip (hover on desktop, tap on mobile)
+// Row tooltips (hover on desktop, tap on mobile)
 // ---------------------------------------------------------------------------
+// Which column the pointer is over decides what the tooltip says: the company
+// name over Position, the underlier price over the six data columns, nothing
+// at all over the unlabelled actions column.  The two used to arrive together —
+// a native title on the symbol plus the custom tooltip on the whole row — so
+// hovering Position produced two overlapping popups saying different things.
+
+const TIP_NAME  = 'name';    // company name — the Position column
+const TIP_PRICE = 'price';   // underlier price — the six data columns
 
 let _hoverTimer = null;   // hover delay timer handle
 let _hideTimer  = null;   // auto-dismiss timer handle (touch)
 let _tipPosId   = null;   // id of the position the tooltip is currently showing
+let _tipKind    = null;   // TIP_NAME / TIP_PRICE — which datum, so a refresh
+                          // that lands while it is open rewrites the right one
+
+/** Which tooltip a cell owns, or null when it should stay quiet. */
+function _cellTipKind(td) {
+    if (!td)                                       return null;
+    if (td.classList.contains('mw-actions-cell'))  return null;
+    if (td.classList.contains('mw-position-cell')) return TIP_NAME;
+    return TIP_PRICE;
+}
+
+/** Text for one kind of row tooltip, or null when there is nothing to say.
+ *  The company name arrives with the price pass, so it is absent on a cold
+ *  paint — and some symbols have no name at all. */
+function _tipTextFor(pos, kind) {
+    if (kind === TIP_NAME)  return pos.company_name || null;
+    if (kind === TIP_PRICE) return _priceTipText(pos);
+    return null;
+}
 
 /** Touch-style device: no hover, so the row/badge tooltips are tap-driven. */
 const _isTouch = window.matchMedia('(hover: none)').matches;
@@ -531,7 +565,7 @@ function _stampFetchTimes(positions) {
     }
 }
 
-function _tooltipText(pos) {
+function _priceTipText(pos) {
     if (pos.price == null) return `${pos.symbol} —`;
     const suffix = pos.price_session === 'pre' ? ' (pre)'
                   : pos.price_session === 'post' ? ' (post)' : '';
@@ -557,20 +591,30 @@ function _refreshTooltipText() {
     const tip = document.getElementById('posTooltip');
     if (_tipPosId == null || tip.style.display === 'none') return;
     const pos = _positions.find(p => p.id === _tipPosId);
-    if (pos) tip.textContent = _tooltipText(pos);
+    if (!pos) return;
+    const text = _tipTextFor(pos, _tipKind);
+    if (text != null) tip.textContent = text;
 }
 
-function showTooltip(pos, clientX, clientY) {
-    // A hover on stale data kicks off a refresh; the tooltip shows what we have
-    // now and _refreshTooltipText() updates it in place when the fetch lands.
-    if (_priceIsStale(pos) && !_loadCtrl) loadPositions();
-    showTipText(_tooltipText(pos), clientX, clientY);
+/** Show the tooltip a cell owns.  Returns false when it has nothing to say —
+ *  an unnamed symbol, or the actions column. */
+function showCellTooltip(pos, kind, clientX, clientY) {
+    // A hover on a stale price kicks off a refresh; the tooltip shows what we
+    // have now and _refreshTooltipText() updates it in place when the fetch
+    // lands.  Only the price goes stale, so only the price rung triggers it.
+    if (kind === TIP_PRICE && _priceIsStale(pos) && !_loadCtrl) loadPositions();
+    const text = _tipTextFor(pos, kind);
+    if (text == null) return false;
+    showTipText(text, clientX, clientY);
     _tipPosId = pos.id;
+    _tipKind  = kind;
+    return true;
 }
 
 /** Show arbitrary text in the tooltip, anchored near (clientX, clientY). */
 function showTipText(text, clientX, clientY) {
     _tipPosId = null;
+    _tipKind  = null;
     const tip = document.getElementById('posTooltip');
     tip.textContent = text;
     tip.style.display = 'block';
@@ -597,48 +641,75 @@ function hideTooltip() {
     if (_hideTimer) { clearTimeout(_hideTimer); _hideTimer = null; }
     document.getElementById('posTooltip').style.display = 'none';
     _tipPosId = null;
+    _tipKind  = null;
 }
 
 function _addRowInteractions(tr, pos) {
+    const cancelPending = () => {
+        if (_hoverTimer) { clearTimeout(_hoverTimer); _hoverTimer = null; }
+    };
+
     if (_isTouch) {
         // Touch: a plain tap. Long-press was unreliable — the browser's own
         // text-selection gesture wins. A tap on an indicator badge shows that
-        // badge's text (no native title tooltips on touch); a tap anywhere else
-        // in the row shows the underlier price.
+        // badge's text (no native title tooltips on touch); otherwise the tap
+        // shows whatever the column it landed in owns, which is the same split
+        // the desktop hover makes.
         tr.addEventListener('click', e => {
             if (e.target.closest('.mw-row-btn')) return;   // edit/delete/merge keep their action
-            const badge = e.target.closest('.mw-ind');
             const x = e.clientX, y = e.clientY;
-            if (badge) {
-                showTipText(badge.title, x, y);
-            } else if (_tipPosId === pos.id) {
-                hideTooltip();                             // tap again to dismiss
-            } else {
-                showTooltip(pos, x, y);
-            }
+            const badge = e.target.closest('.mw-ind');
+            if (badge) { showTipText(badge.title, x, y); return; }
+
+            const kind = _cellTipKind(e.target.closest('td'));
+            if (kind === null) { hideTooltip(); return; }  // actions column: nothing to say
+            // Tapping the same column of the same row again dismisses it;
+            // tapping across to a different column swaps the content instead.
+            if (_tipPosId === pos.id && _tipKind === kind) { hideTooltip(); return; }
+            showCellTooltip(pos, kind, x, y);
         });
         return;
     }
 
-    // Desktop: hover with delay
-    tr.addEventListener('mouseenter', e => {
-        const x = e.clientX, y = e.clientY;
-        _hoverTimer = setTimeout(() => showTooltip(pos, x, y), HOVER_DELAY_MS);
-    });
-    // mouseover bubbles from child elements, so we can catch badge hovers here.
-    // When the cursor lands on any .mw-ind badge (risk/ITM/earnings), suppress
-    // the price tooltip — the badge's own native title tooltip takes over.
+    // Desktop: hover with delay, re-evaluated whenever the pointer crosses into
+    // a cell that owns a different tooltip.  activeKind is what this row has on
+    // screen or on its way there, so sweeping across the six price columns does
+    // not flicker the same text off and on again at every boundary.
+    let hoverCell  = null;
+    let activeKind = null;
+
+    // mouseover bubbles from child elements, so cell-to-cell moves land here —
+    // mouseenter would only fire once, on entering the row.
     tr.addEventListener('mouseover', e => {
+        // An indicator badge (risk / ITM / earnings) carries its own native
+        // title tooltip; suppress ours so the two never stack up.
         if (e.target.closest('.mw-ind')) {
-            if (_hoverTimer) { clearTimeout(_hoverTimer); _hoverTimer = null; }
+            hoverCell = activeKind = null;
+            cancelPending();
             hideTooltip();
+            return;
         }
-    });
-    tr.addEventListener('mouseleave', () => {
-        if (_hoverTimer) { clearTimeout(_hoverTimer); _hoverTimer = null; }
+        const td = e.target.closest('td');
+        if (td === hoverCell) return;             // still in the same cell
+        hoverCell = td;
+
+        const kind = _cellTipKind(td);
+        if (kind !== null && kind === activeKind) return;   // same text already up
+
+        cancelPending();
         hideTooltip();
+        activeKind = kind;
+        if (kind === null) return;                // actions column: stay quiet
+
+        const x = e.clientX, y = e.clientY;
+        _hoverTimer = setTimeout(() => showCellTooltip(pos, kind, x, y), HOVER_DELAY_MS);
     });
 
+    tr.addEventListener('mouseleave', () => {
+        hoverCell = activeKind = null;
+        cancelPending();
+        hideTooltip();
+    });
 }
 
 function mkTd(text, cls) {
@@ -649,8 +720,9 @@ function mkTd(text, cls) {
 }
 
 /** Indicator swatch (risk / ITM / earnings). A real button so touch users get a
- *  proper tap target — the row click handler shows `text` in the price tooltip,
- *  since native title tooltips never appear on touch. */
+ *  proper tap target — the row click handler shows `text` in the shared
+ *  tooltip, since native title tooltips never appear on touch.  On desktop the
+ *  native title does the work and the cell tooltip stands aside. */
 function mkIndBadge(className, label, text) {
     const btn = document.createElement('button');
     btn.type = 'button';

@@ -19,7 +19,9 @@
       "Bash(wsl.exe *)",
       "Bash(sed -n '/^function showTooltip/,/^}/p' src/ui_web/static/app.js)",
       "Bash(sed -n '/^function hideTooltip/,/^}/p' src/ui_web/static/app.js)",
-      "Bash(wsl *)"
+      "Bash(wsl *)",
+      "Bash(sed -i \"s/if ot == 'STOCK' or not k or exp.startswith\\('9999'\\):/if not k or exp.startswith\\('9999'\\):/\" probe2.py)",
+      "Bash(cp probe2.py \"//wsl.localhost/Ubuntu/tmp/probe2.py\")"
     ]
   }
 }

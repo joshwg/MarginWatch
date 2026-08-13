@@ -48,6 +48,8 @@ class CacheService:
         self._earnings: dict[str, str | None] = {}
         # Not cleared by a session rollover — a sector has nothing to do with price.
         self._sector: dict[str, str | None] = {}
+        # Same for the company name, which is display-only (hover on a position).
+        self._company_name: dict[str, str | None] = {}
         # symbol → short error description; persists until cache is reset
         self._failed: dict[str, str] = {}
         # Human-readable status of the in-progress fetch ("AAPL", "TSLA options", …)
@@ -253,6 +255,21 @@ class CacheService:
                 self._sector[symbol] = mds.fetch_sector(symbol)
             return self._sector.get(symbol)
 
+    def company_name(self, symbol: str) -> str | None:
+        return self._company_name.get(symbol)
+
+    def fetch_company_name(self, symbol: str) -> str | None:
+        """Return the company name, fetching if not yet cached this session.
+
+        Membership decides, as with the sector: None is a real answer for a
+        symbol Yahoo has no name for, and re-asking every pass would spend a
+        lookup to learn that again.
+        """
+        with self._symbol_lock(symbol):
+            if symbol not in self._company_name:
+                self._company_name[symbol] = mds.fetch_company_name(symbol)
+            return self._company_name.get(symbol)
+
     # ------------------------------------------------------------------
     # Private fetchers
     # ------------------------------------------------------------------
@@ -263,6 +280,7 @@ class CacheService:
             self.fetch_price(sym)
             self.fetch_earnings_date(sym)   # cached after the first call
             self.fetch_sector(sym)          # disk-cached in option_lib for a month
+            self.fetch_company_name(sym)    # same — one lookup per symbol per month
         self.current_fetch = ""
 
     def _fetch_greeks(self, positions: list[Position]) -> None:
