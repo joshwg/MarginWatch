@@ -24,7 +24,21 @@ _CREATE_POSITIONS = """
         open_date   TEXT    NOT NULL,
         long_shares  INTEGER,   -- actual share count for STOCK rows
         long_cost    REAL,      -- per-share cost basis for STOCK rows
-        strike2      REAL       -- spread: protective long leg strike; straddle: put strike
+        strike2      REAL,      -- spread: protective long leg strike; straddle: put strike
+        portfolio_id INTEGER    -- portfolios.id
+    )
+"""
+
+# Portfolios: each has its own margin capacity (max_margin × multiplier).
+# Exactly one is the default — where new positions land and where the
+# positions of a deleted portfolio are moved.  Names are unique ignoring case.
+_CREATE_PORTFOLIOS = """
+    CREATE TABLE IF NOT EXISTS portfolios (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        name        TEXT    NOT NULL UNIQUE COLLATE NOCASE,
+        max_margin  INTEGER NOT NULL DEFAULT 250000,
+        multiplier  REAL    NOT NULL DEFAULT 1.5,
+        is_default  INTEGER NOT NULL DEFAULT 0
     )
 """
 
@@ -53,9 +67,19 @@ def _migrate_positions(conn: sqlite3.Connection) -> None:
 
     # Add any missing optional columns (new installs with old schema)
     existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(positions)")}
-    for col, defn in [("long_shares", "INTEGER"), ("long_cost", "REAL"), ("strike2", "REAL")]:
+    for col, defn in [("long_shares", "INTEGER"), ("long_cost", "REAL"), ("strike2", "REAL"),
+                      ("portfolio_id", "INTEGER")]:
         if col not in existing_cols:
             conn.execute(f"ALTER TABLE positions ADD COLUMN {col} {defn}")
+
+
+def _ensure_default_portfolio(conn: sqlite3.Connection) -> None:
+    """With no portfolios at all, create "Main" and make it the default."""
+    if conn.execute("SELECT COUNT(*) FROM portfolios").fetchone()[0] == 0:
+        conn.execute(
+            "INSERT INTO portfolios (name, max_margin, multiplier, is_default)"
+            " VALUES ('Main', 250000, 1.5, 1)"
+        )
 
 
 def init_db() -> None:
@@ -69,6 +93,8 @@ def init_db() -> None:
 
         _migrate_positions(conn)
         conn.execute(_CREATE_POSITIONS)
+        conn.execute(_CREATE_PORTFOLIOS)
+        _ensure_default_portfolio(conn)
         conn.commit()
 
 

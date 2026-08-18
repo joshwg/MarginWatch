@@ -6,6 +6,7 @@ from datetime import date
 
 import constants
 import db
+import repositories.portfolios_repository as pf_repo
 from models import Position
 
 
@@ -48,6 +49,12 @@ def get_position(row_id: int) -> Position | None:
     return Position.from_row(row) if row else None
 
 
+def _portfolio_id(d: dict) -> int:
+    """The portfolio a dialog result names, or the default when it names none."""
+    pid = d.get("portfolio_id")
+    return int(pid) if pid else pf_repo.get_default().id
+
+
 def insert_position(d: dict) -> None:
     """Insert a new OPEN position from a dialog result dict."""
     today = date.today().isoformat()
@@ -55,11 +62,11 @@ def insert_position(d: dict) -> None:
         conn.execute(
             "INSERT INTO positions"
             " (symbol, option_type, strike, expiration, quantity,"
-            "  open_date, long_shares, long_cost, strike2)"
-            " VALUES (?,?,?,?,?,?,?,?,?)",
+            "  open_date, long_shares, long_cost, strike2, portfolio_id)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?)",
             (d["symbol"], d["option_type"], d["strike"], d["expiration"],
              d["quantity"], today, d["long_shares"], d["long_cost"],
-             d.get("strike2")),
+             d.get("strike2"), _portfolio_id(d)),
         )
         conn.commit()
 
@@ -69,11 +76,12 @@ def update_position(row_id: int, d: dict) -> None:
     with db.get_connection() as conn:
         conn.execute(
             "UPDATE positions SET symbol=?, option_type=?, strike=?,"
-            " expiration=?, quantity=?, long_shares=?, long_cost=?, strike2=?"
+            " expiration=?, quantity=?, long_shares=?, long_cost=?, strike2=?,"
+            " portfolio_id=?"
             " WHERE id=?",
             (d["symbol"], d["option_type"], d["strike"], d["expiration"],
              d["quantity"], d["long_shares"], d["long_cost"],
-             d.get("strike2"), row_id),
+             d.get("strike2"), _portfolio_id(d), row_id),
         )
         conn.commit()
 
@@ -85,11 +93,12 @@ def delete_position(row_id: int) -> None:
         conn.commit()
 
 
-def merge_stock_positions(symbol: str, expiration: str, strike: float) -> None:
+def merge_stock_positions(symbol: str, expiration: str, strike: float,
+                          portfolio_id: int | None = None) -> None:
     """Merge OPEN STOCK rows that are eligible to merge with the given position.
 
-    Eligible rows: same symbol, and (anchor or candidate has no cover) OR
-    both share the same expiration+strike.
+    Eligible rows: same portfolio, same symbol, and (anchor or candidate has
+    no cover) OR both share the same expiration+strike.
     The surviving row is the first covered row if one exists, otherwise the first row.
     Does nothing if fewer than 2 eligible rows exist.
     """
@@ -97,8 +106,8 @@ def merge_stock_positions(symbol: str, expiration: str, strike: float) -> None:
     with db.get_connection() as conn:
         all_rows = conn.execute(
             "SELECT id, long_shares, long_cost, strike, expiration FROM positions"
-            " WHERE option_type='STOCK' AND symbol=?",
-            (symbol,),
+            " WHERE option_type='STOCK' AND symbol=? AND portfolio_id IS ?",
+            (symbol, portfolio_id),
         ).fetchall()
 
         merge_rows = []

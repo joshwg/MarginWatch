@@ -11,9 +11,8 @@ from typing import Any
 DATA_DIR    = Path(__file__).parent.parent / "data"
 CONFIG_FILE = DATA_DIR / "marginwatch.cfg"
 
+# Margin basis and multiplier are per-portfolio (portfolios table), not here.
 DEFAULTS: dict[str, Any] = {
-    "MaximumMarginBasis": 250000,
-    "MarginMultiplier":   1.5,
     "RiskFreeRate":       4.5,   # percent, e.g. 4.5 means r=0.045
     "SortOrder":          "expiry",
 }
@@ -36,9 +35,7 @@ def load_config() -> dict:
 
     for line in CONFIG_FILE.read_text(encoding="utf-8").splitlines():
         line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if "=" not in line:
+        if not line or line.startswith("#") or "=" not in line:
             continue
         key, _, raw = line.partition("=")
         key = key.strip()

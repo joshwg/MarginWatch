@@ -11,6 +11,7 @@ from __future__ import annotations
 import csv
 import dataclasses
 import hashlib
+import hmac
 import io
 import logging
 import os
@@ -28,11 +29,11 @@ from flask import (Flask, Response, jsonify, redirect, render_template,
 import constants
 import db
 import repositories.config_repository as cfg_repo
+import repositories.portfolios_repository as pf_repo
 import repositories.positions_repository as pos_repo
 import services.position_service as ps
 import ui_styles as styles
-import utils
-from models import Position
+from models import Portfolio, Position
 from services.cache_service import CacheService
 
 
@@ -242,6 +243,9 @@ def _touch_session() -> None:
 def check_auth():
     if request.endpoint in ("login", "static", "favicon", "api_price", "api_optprice"):
         return
+    if request.endpoint == "api_snapshot":
+        # Token-authenticated (see _snapshot_authorized); no cookie session.
+        return
     if not _is_authenticated():
         if request.path.startswith("/api/") or request.path == "/export/csv":
             return jsonify({"error": "unauthorized"}), 401
@@ -338,46 +342,80 @@ def _sorted_positions(sort: str) -> list:
     return sorted(rows, key=lambda r: (_effective_expiration(r), r.symbol, r.strike or 0.0))
 
 
-@app.route("/api/positions")
-def api_positions():
-    """Phase 1: return position list from the database immediately.
+def _portfolio_summary(portfolios: list[Portfolio], items: list[dict]) -> dict:
+    """Total / available margin for the whole book and for each portfolio.
 
-    Does NOT block on market-data fetches — uses whatever is already in the
-    cache (populated by the startup prefetch or a previous load).  The client
-    renders the table right away, then calls /api/prices as phase 2 to fill in
-    live prices and greeks.
+    Available margin is capacity (max_margin × multiplier) less the margin in
+    use; the "All" figure is the sum of every portfolio's capacity less every
+    position's margin, so it is the aggregate rather than any one account.
     """
-    config = cfg_repo.load()
-    sort = request.args.get("sort", config.get("SortOrder", "alpha"))
-    positions = _sorted_positions(sort)
+    used: dict[int, float] = {}
+    counts: dict[int, int] = {}
+    for item in items:
+        pid = item["portfolio_id"]
+        used[pid] = used.get(pid, 0.0) + item["margin"]
+        counts[pid] = counts.get(pid, 0) + 1
+    rows = []
+    for pf in portfolios:
+        rows.append({
+            "id": pf.id,
+            "name": pf.name,
+            "abbrev": pf.abbrev,
+            "is_default": pf.is_default,
+            "max_margin": pf.max_margin,
+            "multiplier": pf.multiplier,
+            "position_count": counts.get(pf.id, 0),
+            "total_margin": round(used.get(pf.id, 0.0), 1),
+            "avail_margin": round(pf.capacity_k - used.get(pf.id, 0.0), 1),
+        })
+    total_margin = sum(used.values())
+    capacity = sum(pf.capacity_k for pf in portfolios)
+    return {
+        "total_margin": round(total_margin, 1),
+        "avail_margin": round(capacity - total_margin, 1),
+        "portfolios": rows,
+    }
 
-    max_margin = utils.parse_float(config.get("MaximumMarginBasis", "250000"), 250000.0)
-    multiplier = utils.parse_float(config.get("MarginMultiplier", "1.5"), 1.5)
+
+def _build_items(positions: list) -> tuple[list[dict], dict]:
+    """Build the per-position rows plus the summary block from warm cache data.
+
+    Shared by the browser's phase-1 call and the token-authenticated snapshot
+    endpoint so both describe a position identically.
+    """
+    portfolios = pf_repo.list_portfolios()
+    by_id = {pf.id: pf for pf in portfolios}
+    default_pf = next((pf for pf in portfolios if pf.is_default), portfolios[0])
 
     mergeable_groups = ps.mergeable_stock_groups(positions)
     seen_merge_groups: set[tuple] = set()
 
     items = []
-    total_margin = 0.0
     total_theta_day = 0.0
 
     for pos in positions:
         display = _compute_display(pos, _cache)
-        total_margin += display["margin"]
         if display["theta_dollars"] is not None:
             total_theta_day += display["theta_dollars"]
 
-        merge_key = (pos.symbol, pos.expiration or "", pos.strike or 0.0)
+        merge_key = ps.merge_key(pos)
         can_merge = ps.is_stock(pos) and merge_key in mergeable_groups
         show_merge = False
         if can_merge and merge_key not in seen_merge_groups:
             show_merge = True
             seen_merge_groups.add(merge_key)
 
+        # A position whose portfolio is unknown counts against the default —
+        # the summary must never lose margin down a crack.
+        pf = by_id.get(getattr(pos, "portfolio_id", None), default_pf)
+
         exp_display = pos.expiration if pos.expiration != constants.NO_EXPIRATION else None
         stock_price = _cache.price(pos.symbol)
         items.append({
             "id": pos.id,
+            "portfolio_id": pf.id,
+            "portfolio": pf.name,
+            "portfolio_abbrev": pf.abbrev,
             "symbol": pos.symbol,
             # Warm only — phase 1 never fetches, so this is None until the
             # prefetch or a /api/prices pass has run.  See api_prices().
@@ -417,15 +455,118 @@ def api_positions():
             "merge_key": list(merge_key),
         })
 
-    avail = (max_margin / 1000) * multiplier - total_margin
+    summary = _portfolio_summary(portfolios, items)
+    summary["total_theta"] = round(total_theta_day)
+    return items, summary
 
+
+@app.route("/api/positions")
+def api_positions():
+    """Phase 1: return position list from the database immediately.
+
+    Does NOT block on market-data fetches — uses whatever is already in the
+    cache (populated by the startup prefetch or a previous load).  The client
+    renders the table right away, then calls /api/prices as phase 2 to fill in
+    live prices and greeks.
+    """
+    config = cfg_repo.load()
+    sort = request.args.get("sort", config.get("SortOrder", "alpha"))
+    items, summary = _build_items(_sorted_positions(sort))
     return jsonify({
         "positions": items,
-        "summary": {
-            "total_margin": round(total_margin, 1),
-            "avail_margin": round(avail, 1),
-            "total_theta": round(total_theta_day),
-        },
+        "summary": summary,
+        "fetch_errors": _cache.fetch_errors(),
+    })
+
+
+# ---------------------------------------------------------------------------
+# Snapshot API (for external dashboards such as Glance)
+# ---------------------------------------------------------------------------
+
+def _snapshot_authorized() -> bool:
+    """Accept the site password as a bearer token or API-key header.
+
+    Headers only — a ``?key=`` query parameter would land in access logs.
+    """
+    supplied = ""
+    auth = request.headers.get("Authorization", "")
+    if auth.lower().startswith("bearer "):
+        supplied = auth[7:].strip()
+    if not supplied:
+        supplied = request.headers.get("X-Api-Key", "")
+    return bool(supplied) and hmac.compare_digest(supplied, _password)
+
+
+def _weekly_summary(items: list[dict]) -> list[dict]:
+    """Roll the position rows up by expiration week, soonest first.
+
+    Each bucket is labelled by the Friday of its ISO week ("Aug 21"), so a
+    Thursday expiry in a holiday week still lands with the rest of that week.
+    Positions with no expiration (uncovered stock) are not counted.
+    """
+    buckets: dict[date, dict] = {}
+    for item in items:
+        exp = item.get("expiration")
+        # Uncovered stock never expires, whatever date the row happens to carry.
+        if not exp or (item.get("is_stock_row") and not item.get("strike")):
+            continue
+        try:
+            d = date.fromisoformat(exp)
+        except ValueError:
+            continue
+        friday = d + timedelta(days=4 - d.weekday())
+        b = buckets.setdefault(friday, {
+            "week_ending": friday.isoformat(),
+            "week_label": f"{friday.strftime('%b')} {friday.day}",
+            "position_count": 0,
+            "total_margin": 0.0,
+            "itm_count": 0,
+        })
+        b["position_count"] += 1
+        b["total_margin"] += item["margin"] or 0.0
+        if item["itm"]:
+            b["itm_count"] += 1
+    out = []
+    for friday in sorted(buckets):
+        b = buckets[friday]
+        b["total_margin"] = round(b["total_margin"], 1)
+        out.append(b)
+    return out
+
+
+@app.route("/api/snapshot")
+def api_snapshot():
+    """Everything the main page shows, fully priced, in one JSON document.
+
+    Authentication is by the MARGIN_PWD password rather than a login session,
+    sent in a header (never a query parameter, which would be logged):
+        Authorization: Bearer <password>   (preferred)
+        X-Api-Key: <password>
+
+    By default this refreshes any stale market data first (same as the browser's
+    phase-2 call), so it can take a few seconds when the cache is cold.  Pass
+    ?cached=1 to return whatever is already in the cache without fetching.
+    ?sort=alpha|type|expiration overrides the configured sort order.
+    """
+    if not _snapshot_authorized():
+        return jsonify({"error": "unauthorized"}), 401
+
+    if request.args.get("cached") not in ("1", "true", "yes"):
+        _cache.fetch_all(pos_repo.get_open_positions())
+
+    config = cfg_repo.load()
+    sort = request.args.get("sort", config.get("SortOrder", "alpha"))
+    items, summary = _build_items(_sorted_positions(sort))
+    for item in items:
+        item.pop("show_merge", None)
+        item.pop("merge_key", None)
+
+    return jsonify({
+        "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "version": constants.__version__,
+        "positions": items,
+        "summary": summary,
+        "weekly_summary": _weekly_summary(items),
         "fetch_errors": _cache.fetch_errors(),
     })
 
@@ -559,6 +700,7 @@ def api_merge_positions():
         d["symbol"],
         d["expiration"] or constants.NO_EXPIRATION,
         float(d["strike"]),
+        int(d["portfolio_id"]) if d.get("portfolio_id") else None,
     )
     return jsonify({"ok": True})
 
@@ -580,7 +722,13 @@ def api_add_position():
     if not d:
         return jsonify({"error": "missing or invalid JSON body"}), 400
     _normalize_position_data(d)
+    if d["portfolio_id"] is not None and pf_repo.get_portfolio(d["portfolio_id"]) is None:
+        return jsonify({"error": "unknown portfolio"}), 400
     pos_repo.insert_position(d)
+    # The Add form's portfolio choice sticks: picking a portfolio there makes
+    # it the default, so the user can work one account at a time.
+    if d["portfolio_id"] is not None and d["portfolio_id"] != pf_repo.get_default().id:
+        pf_repo.set_default(d["portfolio_id"])
     symbol = d["symbol"]
     _cache.invalidate(symbol)
     threading.Thread(target=_prefetch_symbol, args=(symbol,), daemon=True).start()
@@ -593,6 +741,8 @@ def api_update_position(row_id: int):
     if not d:
         return jsonify({"error": "missing or invalid JSON body"}), 400
     _normalize_position_data(d)
+    if d["portfolio_id"] is not None and pf_repo.get_portfolio(d["portfolio_id"]) is None:
+        return jsonify({"error": "unknown portfolio"}), 400
     pos_repo.update_position(row_id, d)
     symbol = d["symbol"]
     _cache.invalidate(symbol)
@@ -613,6 +763,7 @@ def _normalize_position_data(d: dict) -> None:
     d["long_shares"] = int(d["long_shares"]) if d.get("long_shares") else None
     d["long_cost"] = float(d["long_cost"]) if d.get("long_cost") else None
     d["strike2"] = float(d["strike2"]) if d.get("strike2") else None
+    d["portfolio_id"] = int(d["portfolio_id"]) if d.get("portfolio_id") else None
     # Straddle: put strike defaults to call strike (true straddle if not specified)
     if d.get("option_type") == "STRADDLE" and not d.get("strike2"):
         d["strike2"] = d["strike"]
@@ -633,16 +784,12 @@ def api_get_config():
 def api_save_config():
     d = request.get_json(silent=True) or {}
     try:
-        margin        = int(d["MaximumMarginBasis"])
-        multiplier    = float(d["MarginMultiplier"])
         risk_free_pct = float(d["RiskFreeRate"])
     except (ValueError, KeyError, TypeError):
         return jsonify({"error": "invalid values"}), 400
-    if not (0.5 <= multiplier <= 4.0):
-        return jsonify({"error": "Multiplier must be 0.5–4.0"}), 400
     if not (0.0 <= risk_free_pct <= 20.0):
         return jsonify({"error": "Risk-free rate must be 0–20%"}), 400
-    cfg_repo.save(margin, multiplier, risk_free_pct)
+    cfg_repo.save(risk_free_pct)
     _cache._r = risk_free_pct / 100.0        # take effect on the next cache refresh
     sort = d.get("SortOrder")
     if sort:
@@ -651,10 +798,74 @@ def api_save_config():
 
 
 # ---------------------------------------------------------------------------
+# Portfolios API
+# ---------------------------------------------------------------------------
+
+def _portfolio_dict(pf: Portfolio) -> dict:
+    return {
+        "id": pf.id,
+        "name": pf.name,
+        "abbrev": pf.abbrev,
+        "max_margin": pf.max_margin,
+        "multiplier": pf.multiplier,
+        "is_default": pf.is_default,
+    }
+
+
+@app.route("/api/portfolios")
+def api_list_portfolios():
+    return jsonify({
+        "portfolios": [_portfolio_dict(pf) for pf in pf_repo.list_portfolios()],
+        "max_portfolios": pf_repo.MAX_PORTFOLIOS,
+    })
+
+
+@app.route("/api/portfolios", methods=["POST"])
+def api_add_portfolio():
+    d = request.get_json(silent=True) or {}
+    try:
+        pid = pf_repo.create(d.get("name", ""), d.get("max_margin"), d.get("multiplier"),
+                             make_default=bool(d.get("is_default")))
+    except pf_repo.PortfolioError as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify({"ok": True, "id": pid})
+
+
+@app.route("/api/portfolios/<int:pid>", methods=["PUT"])
+def api_update_portfolio(pid: int):
+    d = request.get_json(silent=True) or {}
+    try:
+        pf_repo.update(pid, d.get("name", ""), d.get("max_margin"), d.get("multiplier"),
+                       make_default=bool(d.get("is_default")))
+    except pf_repo.PortfolioError as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify({"ok": True})
+
+
+@app.route("/api/portfolios/<int:pid>/default", methods=["POST"])
+def api_default_portfolio(pid: int):
+    try:
+        pf_repo.set_default(pid)
+    except pf_repo.PortfolioError as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify({"ok": True})
+
+
+@app.route("/api/portfolios/<int:pid>", methods=["DELETE"])
+def api_delete_portfolio(pid: int):
+    """Delete a portfolio; its positions move to the default portfolio."""
+    try:
+        moved = pf_repo.delete(pid)
+    except pf_repo.PortfolioError as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify({"ok": True, "moved": moved})
+
+
+# ---------------------------------------------------------------------------
 # Export
 # ---------------------------------------------------------------------------
 
-_EXPORT_HEADERS = ["Position", "Price", "Margin ($k)", "Qty", "Position Theta ($)", "Expiration", "Per-Share Theta"]
+_EXPORT_HEADERS = ["Portfolio", "Position", "Price", "Margin ($k)", "Qty", "Position Theta ($)", "Expiration", "Per-Share Theta"]
 
 
 @app.route("/export")
@@ -713,9 +924,12 @@ def export_xlsx():
 
 
 def _build_csv_rows(positions: list) -> list[list]:
+    names = {pf.id: pf.name for pf in pf_repo.list_portfolios()}
     rows = []
     for pos in positions:
         gf = f'=GOOGLEFINANCE("{pos.symbol}")'
+        pf_name = names.get(getattr(pos, "portfolio_id", None), "")
+        rows_before = len(rows)
         if ps.is_stock(pos):
             stock_label = f"{pos.symbol} stock ({pos.long_shares or 0} sh)"
             stock_margin = round(ps.margin_k(pos), 2)
@@ -793,6 +1007,8 @@ def _build_csv_rows(positions: list) -> list[list]:
                 pos.expiration or "",
                 round(raw_theta, 4) if raw_theta is not None else "",
             ])
+        for i in range(rows_before, len(rows)):
+            rows[i].insert(0, pf_name)
     return rows
 
 

@@ -5,6 +5,44 @@
 .mw-summary { min-width: 105px; }
 .mw-val { min-width: 58px; display: inline-block; text-align: right; }
 
+/* Summary grid: one row per portfolio under the "All" aggregate row.
+   Columns: label | "Total:" | value | "Avail:" | value.  Only the first row
+   carries the Total/Avail captions; the portfolio rows line their figures up
+   underneath.  Theta sits below the grid (see .mw-summary-theta). */
+.mw-summary-grid {
+    display: grid;
+    grid-template-columns: auto auto auto auto auto;
+    column-gap: 0.3rem;
+    row-gap: 0;
+    align-items: baseline;
+}
+.mw-summary-grid .mw-val { min-width: 52px; }
+.mw-sum-label {
+    font-size: 0.78rem;
+    font-weight: 600;
+    min-width: 2.2em;
+}
+.mw-sum-label.mw-sum-pf { font-weight: 400; color: #555; }
+.mw-summary-theta { margin-top: 1px; }
+
+/* Portfolio column: a three-letter tag in front of each position — context,
+   like the sector column, so it is small and muted. */
+.mw-pf-col {
+    width: 34px;
+    max-width: 40px;
+    font-size: 0.72rem;
+    opacity: 0.8;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Portfolio rows in the Configuration card */
+.mw-pf-table { font-size: 0.85rem; }
+.mw-pf-table td { vertical-align: middle; }
+.mw-pf-table .mw-actions-col { white-space: nowrap; }
+.mw-pf-default { color: #198754; font-weight: 700; }
+
 /* Table scroll container — fixed height */
 .mw-table-wrap { height: 1000px; min-height: 200px; overflow-y: auto; overflow-x: auto; }
 

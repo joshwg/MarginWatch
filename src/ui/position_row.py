@@ -122,7 +122,7 @@ def build_row(
               command=lambda rid=row_id: on_edit(rid)).pack(side=tk.LEFT)
     tk.Button(btn_frame, text="✕", width=1, pady=0, font=("TkDefaultFont", 7),
               command=lambda rid=row_id: on_delete(rid)).pack(side=tk.LEFT)
-    merge_key = (pos.symbol, pos.expiration or "", pos.strike or 0.0)
+    merge_key = ps.merge_key(pos)
     if ps.is_stock(pos) and merge_key in mergeable_groups:
         if merge_key not in seen_merge_groups:
             tk.Button(btn_frame, text="⊕", width=1, pady=0, font=("TkDefaultFont", 7),

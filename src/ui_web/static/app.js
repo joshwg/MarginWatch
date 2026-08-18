@@ -10,6 +10,10 @@ let _loadCtrl = null;          // AbortController for the in-flight loadPosition
 let _loadSeq  = 0;             // generation counter — only the newest load may touch the table
 let _sortQueued = false;       // sort changed mid-load: re-sort once the pull finishes
 let _lastFetchSymbol = '';     // symbol the progress poller last reported
+let _portfolios = [];          // [{id, name, abbrev, max_margin, multiplier, is_default}]
+let _maxPortfolios = 10;
+let _pfModal = null;
+let _pfEditId = null;          // null = adding a portfolio, number = editing
 
 // ---------------------------------------------------------------------------
 // App-wide state
@@ -24,9 +28,11 @@ let _earningsDate = null;
 document.addEventListener('DOMContentLoaded', async () => {
     _posModal     = new bootstrap.Modal(document.getElementById('positionModal'));
     _confirmModal = new bootstrap.Modal(document.getElementById('confirmModal'));
+    _pfModal      = new bootstrap.Modal(document.getElementById('portfolioModal'));
 
     buildLegend();
     await loadConfig();
+    await loadPortfolios();
     loadPositions();
 
     document.querySelectorAll('input[name="sort"]').forEach(r =>
@@ -150,6 +156,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('fType').addEventListener('change', updateFormFields);
     document.getElementById('btnAssigned').addEventListener('click', applyAssigned);
     document.getElementById('btnClearCover').addEventListener('click', applyClearCover);
+    document.getElementById('btnAddPortfolio').addEventListener('click', openAddPortfolio);
+    document.getElementById('portfolioForm').addEventListener('submit', savePortfolio);
 
     // Touch: a tap outside the table dismisses a visible tooltip.
     if (_isTouch) {
@@ -319,9 +327,6 @@ async function loadConfig() {
     const resp = await fetch('/api/config');
     if (!resp.ok) return;
     const cfg = await resp.json();
-    document.getElementById('cfgMargin').value = cfg.MaximumMarginBasis || 250000;
-    document.getElementById('cfgMultiplier').value =
-        parseFloat(cfg.MarginMultiplier || 1.5).toFixed(1);
     document.getElementById('cfgRiskFree').value =
         parseFloat(cfg.RiskFreeRate || 4.5).toFixed(1);
     const radio = document.querySelector(
@@ -334,6 +339,9 @@ async function loadConfig() {
 // Summary
 // ---------------------------------------------------------------------------
 
+/** Row 1 is "All" — every position in every portfolio against the summed
+ *  capacity.  One row per portfolio follows, keyed by its three-letter tag,
+ *  then theta underneath the lot. */
 function updateSummary(s) {
     document.getElementById('totalMargin').textContent = `$${s.total_margin.toFixed(1)}k`;
     document.getElementById('totalTheta').textContent =
@@ -341,6 +349,26 @@ function updateSummary(s) {
     const el = document.getElementById('availMargin');
     el.textContent = `$${s.avail_margin.toFixed(1)}k`;
     el.className = 'mw-val' + (s.avail_margin < 0 ? ' mw-danger' : '');
+
+    const grid = document.getElementById('summaryGrid');
+    grid.querySelectorAll('.mw-sum-pf-row').forEach(n => n.remove());
+    for (const pf of s.portfolios || []) {
+        const label = document.createElement('span');
+        label.className = 'mw-sum-label mw-sum-pf mw-sum-pf-row';
+        label.textContent = pf.abbrev;
+        label.title = pf.name;
+        const gap1 = document.createElement('span');
+        gap1.className = 'mw-sum-pf-row';
+        const total = document.createElement('strong');
+        total.className = 'mw-val mw-sum-pf-row';
+        total.textContent = `$${pf.total_margin.toFixed(1)}k`;
+        const gap2 = document.createElement('span');
+        gap2.className = 'mw-sum-pf-row';
+        const avail = document.createElement('strong');
+        avail.className = 'mw-val mw-sum-pf-row' + (pf.avail_margin < 0 ? ' mw-danger' : '');
+        avail.textContent = `$${pf.avail_margin.toFixed(1)}k`;
+        grid.append(label, gap1, total, gap2, avail);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -364,6 +392,8 @@ function renderTable() {
         items.sort((a, b) => {
             let va, vb;
             if      (col === 'position')   { va = a.abbrev;       vb = b.abbrev; }
+            else if (col === 'portfolio')  { va = (a.portfolio || '').toLowerCase();
+                                             vb = (b.portfolio || '').toLowerCase(); }
             // Unknown sectors group together at the end rather than under ''.
             else if (col === 'sector')     { va = a.sector || '￿';
                                              vb = b.sector || '￿'; }
@@ -387,7 +417,7 @@ function renderTable() {
 
     if (items.length === 0) {
         tbody.innerHTML =
-            '<tr><td colspan="8" class="text-center text-muted py-3">No open positions.</td></tr>';
+            '<tr><td colspan="9" class="text-center text-muted py-3">No open positions.</td></tr>';
         return;
     }
 
@@ -396,6 +426,9 @@ function renderTable() {
         if ((i + 1) % ROW_RULE_INTERVAL === 0) tr.classList.add('mw-row-rule');
         tr.style.backgroundColor = pos.bg;
         tr.style.color = pos.fg;
+
+        // Portfolio tag — first three letters of the portfolio's name.
+        const pfCell = mkTd(pos.portfolio_abbrev || '', 'mw-pf-col');
 
         // Position cell: optional indicator swatches + name.  Classed so the
         // tooltip handler can tell it apart — it is the one column that shows
@@ -483,12 +516,12 @@ function renderTable() {
         actCell.append(editBtn, delBtn);
 
         if (pos.show_merge) {
-            const [sym, exp, strike] = pos.merge_key;
-            const mergeBtn = mkRowBtn(ICON_MERGE, () => mergePositions(sym, exp, strike));
+            const [pfId, sym, exp, strike] = pos.merge_key;
+            const mergeBtn = mkRowBtn(ICON_MERGE, () => mergePositions(pfId, sym, exp, strike));
             actCell.appendChild(mergeBtn);
         }
 
-        tr.append(posCell, sectorCell, qtyCell, marginCell, optCell, thetaCell, thetaNormCell, actCell);
+        tr.append(pfCell, posCell, sectorCell, qtyCell, marginCell, optCell, thetaCell, thetaNormCell, actCell);
         _addRowInteractions(tr, pos);
         tbody.appendChild(tr);
     }
@@ -505,6 +538,7 @@ function renderTable() {
 
 const TIP_NAME  = 'name';    // company name — the Position column
 const TIP_PRICE = 'price';   // underlier price — the six data columns
+const TIP_PF    = 'pf';      // full portfolio name — the Pf column
 
 let _hoverTimer = null;   // hover delay timer handle
 let _hideTimer  = null;   // auto-dismiss timer handle (touch)
@@ -516,6 +550,7 @@ let _tipKind    = null;   // TIP_NAME / TIP_PRICE — which datum, so a refresh
 function _cellTipKind(td) {
     if (!td)                                       return null;
     if (td.classList.contains('mw-actions-cell'))  return null;
+    if (td.classList.contains('mw-pf-col'))        return TIP_PF;
     if (td.classList.contains('mw-position-cell')) return TIP_NAME;
     return TIP_PRICE;
 }
@@ -526,6 +561,7 @@ function _cellTipKind(td) {
 function _tipTextFor(pos, kind) {
     if (kind === TIP_NAME)  return pos.company_name || null;
     if (kind === TIP_PRICE) return _priceTipText(pos);
+    if (kind === TIP_PF)    return pos.portfolio || null;
     return null;
 }
 
@@ -742,7 +778,7 @@ function mkRowBtn(label, handler) {
 
 function updateColHeaders() {
     const labels = {
-        position: 'Position', sector: 'Sector', qty: '#', margin: 'Margin',
+        portfolio: 'Pf', position: 'Position', sector: 'Sector', qty: '#', margin: 'Margin',
         opt: '$/shr', theta: 'Theta', theta_norm: 'θ/10k',
     };
     document.querySelectorAll('#positionsTable thead th.sortable').forEach(th => {
@@ -758,14 +794,9 @@ function updateColHeaders() {
 // ---------------------------------------------------------------------------
 
 async function saveConfig() {
-    const margin      = parseInt(document.getElementById('cfgMargin').value);
-    const multiplier  = parseFloat(document.getElementById('cfgMultiplier').value);
     const riskFree    = parseFloat(document.getElementById('cfgRiskFree').value);
     const sort        = document.querySelector('input[name="sort"]:checked').value;
-    if (isNaN(margin) || isNaN(multiplier) || isNaN(riskFree)) {
-        alert('Enter valid numeric values.'); return;
-    }
-    if (multiplier < 0.5 || multiplier > 4.0) { alert('Multiplier must be 0.5–4.0.'); return; }
+    if (isNaN(riskFree)) { alert('Enter a valid numeric rate.'); return; }
     if (riskFree < 0 || riskFree > 20) { alert('Risk-free rate must be 0–20%.'); return; }
 
     const btn = document.getElementById('btnSaveConfig');
@@ -786,8 +817,6 @@ async function saveConfig() {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                MaximumMarginBasis: margin,
-                MarginMultiplier: multiplier,
                 RiskFreeRate: riskFree,
                 SortOrder: sort,
             }),
@@ -845,6 +874,8 @@ function openAddModal() {
     _earningsDate = null;
     document.getElementById('positionModalTitle').textContent = 'Add Position';
     document.getElementById('positionForm').reset();
+    // Pre-select the default portfolio; the choice sticks (see savePosition).
+    fillPortfolioSelect(_defaultPortfolioId());
     document.getElementById('fExpiration').value = nextOptionFriday();
     document.getElementById('fQty').value = '1';
     document.getElementById('fStrike2').value = '';
@@ -872,6 +903,7 @@ async function editPosition(id) {
     _editId = id;
 
     document.getElementById('positionModalTitle').textContent = 'Edit Position';
+    fillPortfolioSelect(pos.portfolio_id ?? _defaultPortfolioId());
     document.getElementById('fSymbol').value      = pos.symbol;
     document.getElementById('fType').value        = pos.option_type;
     document.getElementById('fExpiration').value  = pos.expiration || '';
@@ -893,6 +925,7 @@ async function editPosition(id) {
 async function savePosition(e) {
     e.preventDefault();
     const data = {
+        portfolio_id: parseInt(document.getElementById('fPortfolio').value) || null,
         symbol:      document.getElementById('fSymbol').value.trim().toUpperCase(),
         option_type: document.getElementById('fType').value,
         strike:      parseFloat(document.getElementById('fStrike').value) || 0,
@@ -912,6 +945,9 @@ async function savePosition(e) {
         });
         if (resp.ok) {
             _posModal.hide();
+            // Adding to a portfolio makes it the default, so the list's
+            // default flag may have moved.
+            if (!_editId) loadPortfolios();
             loadPositions();
         } else {
             const body = await resp.json().catch(() => ({}));
@@ -930,12 +966,12 @@ async function deletePosition(id) {
     if (resp.ok) loadPositions();
 }
 
-async function mergePositions(symbol, expiration, strike) {
+async function mergePositions(portfolioId, symbol, expiration, strike) {
     if (!await confirmDialog(`Merge ${symbol} STOCK positions into one?`)) return;
     const resp = await fetch('/api/positions/merge', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ symbol, expiration, strike }),
+        body: JSON.stringify({ portfolio_id: portfolioId, symbol, expiration, strike }),
     });
     if (resp.ok) loadPositions();
 }
@@ -981,6 +1017,191 @@ function applyClearCover() {
     document.getElementById('fStrike').value     = '';
     document.getElementById('fExpiration').value = '';
     document.getElementById('btnClearCover').classList.add('d-none');
+}
+
+// ---------------------------------------------------------------------------
+// Portfolios
+// ---------------------------------------------------------------------------
+
+function _defaultPortfolioId() {
+    return (_portfolios.find(p => p.is_default) || _portfolios[0] || {}).id ?? null;
+}
+
+async function loadPortfolios() {
+    try {
+        const resp = await fetch('/api/portfolios');
+        if (!resp.ok) return;
+        const data = await resp.json();
+        _portfolios = data.portfolios || [];
+        _maxPortfolios = data.max_portfolios || _maxPortfolios;
+    } catch (err) {
+        console.error('[MarginWatch] loadPortfolios failed:', err);
+        return;
+    }
+    renderPortfolios();
+}
+
+/** Populate the Add/Edit form's portfolio dropdown and select *selectedId*. */
+function fillPortfolioSelect(selectedId) {
+    const sel = document.getElementById('fPortfolio');
+    sel.innerHTML = '';
+    for (const pf of _portfolios) {
+        const opt = document.createElement('option');
+        opt.value = pf.id;
+        opt.textContent = pf.name + (pf.is_default ? ' (default)' : '');
+        sel.appendChild(opt);
+    }
+    if (selectedId != null) sel.value = String(selectedId);
+}
+
+/** One row per portfolio in the Configuration card, each with edit / delete. */
+function renderPortfolios() {
+    const tbody = document.getElementById('portfoliosBody');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+    for (const pf of _portfolios) {
+        const tr = document.createElement('tr');
+        tr.append(
+            mkTd(pf.name),
+            mkTd(`$${pf.max_margin.toLocaleString()}`, 'text-end'),
+            mkTd(pf.multiplier.toFixed(1), 'text-end'),
+        );
+        const defCell = document.createElement('td');
+        defCell.className = 'text-center';
+        if (pf.is_default) {
+            defCell.textContent = '✓';
+            defCell.className += ' mw-pf-default';
+            defCell.title = 'Default portfolio';
+        } else {
+            const btn = mkRowBtn('☆', () => setDefaultPortfolio(pf.id));
+            btn.title = 'Make default';
+            defCell.appendChild(btn);
+        }
+        const actCell = document.createElement('td');
+        actCell.className = 'text-end mw-actions-cell';
+        actCell.appendChild(mkRowBtn(ICON_EDIT, () => openEditPortfolio(pf.id)));
+        const del = mkRowBtn(ICON_DELETE, () => deletePortfolio(pf.id));
+        if (pf.is_default) {
+            // The default portfolio cannot be deleted: everything else's
+            // positions fall back to it.
+            del.disabled = true;
+            del.title = 'The default portfolio cannot be deleted';
+        }
+        actCell.appendChild(del);
+        tr.append(defCell, actCell);
+        tbody.appendChild(tr);
+    }
+    const addBtn = document.getElementById('btnAddPortfolio');
+    if (addBtn) {
+        const full = _portfolios.length >= _maxPortfolios;
+        addBtn.disabled = full;
+        addBtn.title = full ? `At most ${_maxPortfolios} portfolios` : 'Add portfolio';
+    }
+}
+
+function _showPfMsg(text, cssClass) {
+    const msg = document.getElementById('pfStatusMsg');
+    if (!msg) return;
+    msg.textContent = text;
+    msg.className = `small ${cssClass}`;
+    msg.style.display = 'inline';
+    setTimeout(() => { msg.style.display = 'none'; }, SAVED_MSG_DISMISS_MS * 2);
+}
+
+function openAddPortfolio() {
+    _pfEditId = null;
+    document.getElementById('portfolioModalTitle').textContent = 'Add Portfolio';
+    document.getElementById('portfolioForm').reset();
+    document.getElementById('pfMaxMargin').value = 250000;
+    document.getElementById('pfMultiplier').value = '1.5';
+    document.getElementById('pfDefault').checked = false;
+    document.getElementById('pfDefault').disabled = false;
+    _pfModal.show();
+    setTimeout(() => document.getElementById('pfName').focus(), MODAL_FOCUS_DELAY_MS);
+}
+
+function openEditPortfolio(id) {
+    const pf = _portfolios.find(p => p.id === id);
+    if (!pf) return;
+    _pfEditId = id;
+    document.getElementById('portfolioModalTitle').textContent = 'Edit Portfolio';
+    document.getElementById('pfName').value = pf.name;
+    document.getElementById('pfMaxMargin').value = pf.max_margin;
+    document.getElementById('pfMultiplier').value = pf.multiplier.toFixed(1);
+    const def = document.getElementById('pfDefault');
+    def.checked = pf.is_default;
+    // Un-ticking the only default would leave no default; pick another
+    // portfolio's box instead.
+    def.disabled = pf.is_default;
+    _pfModal.show();
+}
+
+async function savePortfolio(e) {
+    e.preventDefault();
+    const name = document.getElementById('pfName').value.trim();
+    const maxMargin = parseInt(document.getElementById('pfMaxMargin').value);
+    const multiplier = parseFloat(document.getElementById('pfMultiplier').value);
+    if (!name) { alert('Enter a portfolio name.'); return; }
+    if (isNaN(maxMargin) || isNaN(multiplier)) { alert('Enter valid numeric values.'); return; }
+    if (multiplier < 0.5 || multiplier > 4.0) { alert('Multiplier must be 0.5–4.0.'); return; }
+    // Names are unique ignoring case; catch the obvious clash before the round trip.
+    const clash = _portfolios.find(p => p.id !== _pfEditId &&
+                                        p.name.toLowerCase() === name.toLowerCase());
+    if (clash) { alert(`A portfolio named "${clash.name}" already exists.`); return; }
+
+    const body = {
+        name, max_margin: maxMargin, multiplier,
+        is_default: document.getElementById('pfDefault').checked,
+    };
+    const url    = _pfEditId ? `/api/portfolios/${_pfEditId}` : '/api/portfolios';
+    const method = _pfEditId ? 'PUT' : 'POST';
+    try {
+        const resp = await fetch(url, {
+            method,
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+        if (resp.ok) {
+            _pfModal.hide();
+            await loadPortfolios();
+            _showPfMsg('Saved', 'text-success');
+            loadPositions();   // capacities changed → summary changes
+        } else {
+            const err = await resp.json().catch(() => ({}));
+            alert(`Save failed: ${err.error || `server returned ${resp.status}`}`);
+        }
+    } catch (err) {
+        alert(`Save failed: ${err.message}`);
+    }
+}
+
+async function setDefaultPortfolio(id) {
+    const resp = await fetch(`/api/portfolios/${id}/default`, { method: 'POST' });
+    if (resp.ok) {
+        await loadPortfolios();
+    } else {
+        const err = await resp.json().catch(() => ({}));
+        alert(`Failed: ${err.error || `server returned ${resp.status}`}`);
+    }
+}
+
+async function deletePortfolio(id) {
+    const pf = _portfolios.find(p => p.id === id);
+    if (!pf) return;
+    const count = _positions.filter(p => p.portfolio_id === id).length;
+    const def = _portfolios.find(p => p.is_default);
+    const note = count
+        ? ` Its ${count} position${count === 1 ? '' : 's'} will move to ${def ? def.name : 'the default portfolio'}.`
+        : '';
+    if (!await confirmDialog(`Delete portfolio "${pf.name}"?${note}`)) return;
+    const resp = await fetch(`/api/portfolios/${id}`, { method: 'DELETE' });
+    if (resp.ok) {
+        await loadPortfolios();
+        loadPositions();
+    } else {
+        const err = await resp.json().catch(() => ({}));
+        alert(`Delete failed: ${err.error || `server returned ${resp.status}`}`);
+    }
 }
 
 // ---------------------------------------------------------------------------

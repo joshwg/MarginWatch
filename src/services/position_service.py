@@ -257,30 +257,39 @@ def days_to_expiry(pos: Position) -> int:
 def can_merge_stock(p1: Position, p2: Position) -> bool:
     """True if two STOCK positions are eligible to merge.
 
-    Same symbol always required. If at least one has no cover (strike == 0), any
-    same-symbol pair qualifies. If both have cover, they must share expiration and strike.
+    Same portfolio and symbol always required. If at least one has no cover
+    (strike == 0), any such pair qualifies. If both have cover, they must share
+    expiration and strike.
     """
     if p1.symbol != p2.symbol:
+        return False
+    if getattr(p1, "portfolio_id", None) != getattr(p2, "portfolio_id", None):
         return False
     if not has_covered_call(p1) or not has_covered_call(p2):
         return True
     return p1.expiration == p2.expiration and p1.strike == p2.strike
 
 
+def merge_key(pos: Position) -> tuple:
+    """(portfolio_id, symbol, expiration, strike) — the identity a merge acts on."""
+    return (getattr(pos, "portfolio_id", None), pos.symbol,
+            pos.expiration or "", pos.strike or 0.0)
+
+
 def mergeable_stock_groups(positions: list[Position]) -> set[tuple]:
-    """Return (symbol, expiration, strike) keys of STOCK positions that have a merge partner."""
-    by_symbol: dict[str, list[Position]] = {}
+    """Return merge_key()s of STOCK positions that have a merge partner."""
+    by_symbol: dict[tuple, list[Position]] = {}
     for p in positions:
         if is_stock(p):
-            by_symbol.setdefault(p.symbol, []).append(p)
+            by_symbol.setdefault((getattr(p, "portfolio_id", None), p.symbol), []).append(p)
 
     result: set[tuple] = set()
     for group in by_symbol.values():
         for i, p1 in enumerate(group):
             for p2 in group[i + 1:]:
                 if can_merge_stock(p1, p2):
-                    result.add((p1.symbol, p1.expiration or "", p1.strike or 0.0))
-                    result.add((p2.symbol, p2.expiration or "", p2.strike or 0.0))
+                    result.add(merge_key(p1))
+                    result.add(merge_key(p2))
     return result
 
 

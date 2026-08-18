@@ -12,6 +12,7 @@ import constants
 import utils
 import repositories.positions_repository as pos_repo
 import repositories.config_repository as cfg_repo
+import repositories.portfolios_repository as pf_repo
 from services.cache_service import CacheService
 import services.export_service as export_service
 import services.position_service as ps
@@ -59,9 +60,15 @@ class MarginWatchApp(tk.Tk):
         if not (0.0 <= risk_free_pct <= 20.0):
             messagebox.showerror("Invalid rate", "Risk-free rate must be between 0 and 20%.")
             return
-        cfg_repo.save(margin, multiplier, risk_free_pct)
-        self._config["MaximumMarginBasis"] = str(margin)
-        self._config["MarginMultiplier"]   = str(multiplier)
+        # Margin basis and multiplier belong to the default portfolio; the
+        # web UI is where the other portfolios are managed.
+        default_pf = pf_repo.get_default()
+        try:
+            pf_repo.update(default_pf.id, default_pf.name, margin, multiplier)
+        except pf_repo.PortfolioError as e:
+            messagebox.showerror("Invalid input", str(e))
+            return
+        cfg_repo.save(risk_free_pct)
         self._config["RiskFreeRate"]       = str(risk_free_pct)
         self._cache._r = risk_free_pct / 100.0
         self._config_saved_lbl.config(text="Requirements Saved")
@@ -158,20 +165,17 @@ class MarginWatchApp(tk.Tk):
         config_frame = ttk.LabelFrame(self, text="Configuration")
         config_frame.pack(fill=tk.X, padx=4, pady=(4, 6))
 
-        ttk.Label(config_frame, text="Max Margin ($1k increments):").grid(
+        default_pf = pf_repo.get_default()
+        ttk.Label(config_frame, text=f"Max Margin, {default_pf.name} ($1k increments):").grid(
             row=0, column=0, sticky=tk.W, padx=6, pady=(6, 4))
-        initial_margin = utils.parse_int(
-            self._config.get("MaximumMarginBasis", "250000"), 250000)
-        self._margin_var = tk.StringVar(value=str(initial_margin))
+        self._margin_var = tk.StringVar(value=str(default_pf.max_margin))
         ttk.Spinbox(config_frame, from_=0, to=10_000_000, increment=1000,
                     textvariable=self._margin_var, width=10).grid(
             row=0, column=1, padx=6, pady=(6, 4), sticky=tk.W)
 
         ttk.Label(config_frame, text="Margin Multiplier (0.5 – 4.0):").grid(
             row=1, column=0, sticky=tk.W, padx=6, pady=(2, 4))
-        initial_mult = utils.parse_float(
-            self._config.get("MarginMultiplier", "1.5"), 1.5)
-        self._multiplier_var = tk.StringVar(value=f"{initial_mult:.1f}")
+        self._multiplier_var = tk.StringVar(value=f"{default_pf.multiplier:.1f}")
         ttk.Spinbox(config_frame, from_=0.5, to=4.0, increment=0.1,
                     textvariable=self._multiplier_var, width=6,
                     format="%.1f").grid(row=1, column=1, padx=6, pady=(2, 4), sticky=tk.W)
@@ -267,11 +271,9 @@ class MarginWatchApp(tk.Tk):
     def _update_summary(self, total_margin: float, total_theta_day: float):
         self._total_lbl.config(text=f"${total_margin:.1f}k")
         self._theta_lbl.config(text=f"${round(total_theta_day):,d}/d")
-        max_margin = utils.parse_float(
-            self._config.get("MaximumMarginBasis", "250000"), 250000.0)
-        multiplier = utils.parse_float(
-            self._config.get("MarginMultiplier", "1.5"), 1.5)
-        avail = (max_margin / 1000) * multiplier - total_margin
+        # Aggregate over every portfolio, matching the web UI's "All" row.
+        capacity = sum(pf.capacity_k for pf in pf_repo.list_portfolios())
+        avail = capacity - total_margin
         self._avail_lbl.config(
             text=f"${avail:.1f}k",
             foreground="red" if avail < 0 else "",
@@ -381,6 +383,8 @@ class MarginWatchApp(tk.Tk):
         dlg = PositionDialog(self, row=dataclasses.asdict(pos))
         if dlg.result:
             d = dlg.result
+            # The desktop dialog has no portfolio picker; keep the row where it is.
+            d.setdefault("portfolio_id", pos.portfolio_id)
             pos_repo.update_position(row_id, d)
             self._cache.invalidate(d["symbol"])
             self._refresh_positions()
@@ -407,11 +411,11 @@ class MarginWatchApp(tk.Tk):
         return result.get()
 
     def _merge_stock(self, key: tuple):
-        symbol, expiration, strike = key
+        portfolio_id, symbol, expiration, strike = key
         if not self._confirm("Merge Positions",
                              f"Merge {symbol} STOCK positions into one?"):
             return
-        pos_repo.merge_stock_positions(symbol, expiration, strike)
+        pos_repo.merge_stock_positions(symbol, expiration, strike, portfolio_id)
         self._refresh_positions()
 
     def _delete_position(self, row_id: int):

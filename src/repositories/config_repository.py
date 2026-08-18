@@ -1,4 +1,8 @@
-"""Config repository: load and save application settings via config.py."""
+"""Config repository: load and save application settings via config.py.
+
+Margin basis and multiplier are per-portfolio now — see
+repositories.portfolios_repository — so only the rate and sort live here.
+"""
 
 import config
 
@@ -8,12 +12,10 @@ def load() -> dict[str, str]:
     return {k: str(v) for k, v in config.load_config().items()}
 
 
-def save(max_margin: int, multiplier: float, risk_free_pct: float) -> None:
-    """Persist MaximumMarginBasis, MarginMultiplier, and RiskFreeRate."""
+def save(risk_free_pct: float) -> None:
+    """Persist RiskFreeRate."""
     cfg = config.load_config()
-    cfg["MaximumMarginBasis"] = int(max_margin)
-    cfg["MarginMultiplier"]   = float(multiplier)
-    cfg["RiskFreeRate"]       = float(risk_free_pct)
+    cfg["RiskFreeRate"] = float(risk_free_pct)
     config.save_config(cfg)
 
 

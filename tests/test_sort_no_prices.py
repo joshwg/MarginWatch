@@ -68,11 +68,16 @@ def client(monkeypatch, tmp_path):
     # --- stub config so we don't need a real DB ---
     import repositories.config_repository as cfg_repo
     monkeypatch.setattr(cfg_repo, 'load', lambda: {
-        'MaximumMarginBasis': '250000',
-        'MarginMultiplier':   '1.5',
         'RiskFreeRate':       '4.5',
         'SortOrder':          'alpha',
     })
+
+    # --- stub portfolios so the summary has a capacity to measure against ---
+    import repositories.portfolios_repository as pf_repo
+    from models import Portfolio
+    monkeypatch.setattr(pf_repo, 'list_portfolios', lambda: [
+        Portfolio(id=1, name='Main', max_margin=250000, multiplier=1.5, is_default=True),
+    ])
 
     # --- stub positions repository to return our fake positions ---
     import repositories.positions_repository as pos_repo

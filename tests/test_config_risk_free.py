@@ -117,8 +117,6 @@ def _make_client():
 def _valid_payload(**overrides):
     """Return a minimal valid config POST body, with optional field overrides."""
     base = {
-        "MaximumMarginBasis": 250000,
-        "MarginMultiplier": 1.5,
         "RiskFreeRate": 4.5,
         "SortOrder": "alpha",
     }
@@ -207,7 +205,7 @@ def test_rate_above_20_rejected():
 
 def test_missing_risk_free_rejected():
     client = _make_client()
-    payload = {"MaximumMarginBasis": 250000, "MarginMultiplier": 1.5, "SortOrder": "alpha"}
+    payload = {"SortOrder": "alpha"}
     resp = client.post("/api/config",
                        data=json.dumps(payload),
                        content_type="application/json")

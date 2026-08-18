@@ -13,17 +13,18 @@
 
   <!-- Top bar -->
   <div class="d-flex align-items-start gap-3 mb-2 p-2 bg-light border rounded mw-top-bar">
-    <!-- Summary -->
+    <!-- Summary: "All" row (aggregate of every portfolio), one row per
+         portfolio (3-letter abbreviation), then theta.  Rows are rendered by
+         updateSummary() in app.js; the ids below are the aggregate cells. -->
     <div class="mw-summary">
-      <div class="d-flex gap-1 align-items-center">
+      <div class="mw-summary-grid" id="summaryGrid">
+        <span class="mw-sum-label">All</span>
         <small class="text-muted">Total:</small>
         <strong id="totalMargin" class="mw-val">$0.0k</strong>
-      </div>
-      <div class="d-flex gap-1 align-items-center">
         <small class="text-muted">Avail:</small>
         <strong id="availMargin" class="mw-val">$0.0k</strong>
       </div>
-      <div class="d-flex gap-1 align-items-center">
+      <div class="d-flex gap-1 align-items-center mw-summary-theta">
         <small class="text-muted">Theta:</small>
         <strong id="totalTheta" class="mw-val">$0/d</strong>
       </div>
@@ -69,6 +70,7 @@
     <table class="table table-sm table-bordered mb-0" id="positionsTable">
       <thead class="table-light">
         <tr>
+          <th class="sortable mw-pf-col" data-col="portfolio" title="Portfolio">Pf</th>
           <th class="sortable" data-col="position">Position</th>
           <th class="sortable mw-sector-col" data-col="sector">Sector</th>
           <th class="sortable text-center" data-col="qty">#</th>
@@ -80,7 +82,7 @@
         </tr>
       </thead>
       <tbody id="positionsBody">
-        <tr><td colspan="8" class="text-center text-muted py-3">Loading&hellip;</td></tr>
+        <tr><td colspan="9" class="text-center text-muted py-3">Loading&hellip;</td></tr>
       </tbody>
     </table>
   </div>
@@ -92,21 +94,31 @@
       <span class="fw-normal text-muted">v{{ version }}</span>
     </div>
     <div class="card-body py-2">
+      <!-- Portfolios: one row each, edit / delete per row, add up to the limit.
+           Rendered by renderPortfolios() in app.js. -->
+      <div class="d-flex align-items-center gap-2 mb-1">
+        <span class="small fw-semibold">Portfolios</span>
+        <button class="btn btn-sm btn-outline-secondary py-0 px-1" id="btnAddPortfolio"
+                title="Add portfolio">+</button>
+        <span id="pfStatusMsg" class="small" style="display:none"></span>
+      </div>
+      <div class="table-responsive mb-2">
+        <table class="table table-sm mb-0 mw-pf-table" id="portfoliosTable">
+          <thead class="table-light">
+            <tr>
+              <th>Name</th>
+              <th class="text-end">Max Margin</th>
+              <th class="text-end">Mult</th>
+              <th class="text-center" title="New positions go to the default portfolio">Default</th>
+              <th class="mw-actions-col"></th>
+            </tr>
+          </thead>
+          <tbody id="portfoliosBody">
+            <tr><td colspan="5" class="text-muted small">Loading&hellip;</td></tr>
+          </tbody>
+        </table>
+      </div>
       <div class="row g-2 align-items-center">
-        <div class="col-auto">
-          <label for="cfgMargin" class="col-form-label col-form-label-sm">Max Margin ($1k steps):</label>
-        </div>
-        <div class="col-auto">
-          <input type="number" class="form-control form-control-sm" id="cfgMargin"
-                 step="1000" min="0" max="10000000" style="width:110px">
-        </div>
-        <div class="col-auto">
-          <label for="cfgMultiplier" class="col-form-label col-form-label-sm">Multiplier (0.5–4.0):</label>
-        </div>
-        <div class="col-auto">
-          <input type="number" class="form-control form-control-sm" id="cfgMultiplier"
-                 step="0.1" min="0.5" max="4.0" style="width:72px">
-        </div>
         <div class="col-auto">
           <label for="cfgRiskFree" class="col-form-label col-form-label-sm">Risk-Free Rate (%):</label>
         </div>
@@ -142,6 +154,12 @@
       </div>
       <div class="modal-body py-2">
         <form id="positionForm">
+          <div class="row mb-2 align-items-center">
+            <label for="fPortfolio" class="col-4 col-form-label col-form-label-sm">Portfolio</label>
+            <div class="col-8">
+              <select class="form-select form-select-sm" id="fPortfolio"></select>
+            </div>
+          </div>
           <div class="row mb-2 align-items-center">
             <label for="fSymbol" class="col-4 col-form-label col-form-label-sm">Symbol</label>
             <div class="col-8">
@@ -208,6 +226,51 @@
         <button type="button" class="btn btn-warning btn-sm d-none" id="btnAssigned">Assigned</button>
         <button type="button" class="btn btn-secondary btn-sm d-none" id="btnClearCover">Clear Cover</button>
         <button type="submit" form="positionForm" class="btn btn-primary btn-sm">Save</button>
+        <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Portfolio Modal ─────────────────────────────────────────────────────── -->
+<div class="modal fade" id="portfolioModal" tabindex="-1">
+  <div class="modal-dialog modal-sm">
+    <div class="modal-content">
+      <div class="modal-header py-2">
+        <h6 class="modal-title" id="portfolioModalTitle">Add Portfolio</h6>
+        <button type="button" class="btn-close btn-sm" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body py-2">
+        <form id="portfolioForm">
+          <div class="row mb-2 align-items-center">
+            <label for="pfName" class="col-5 col-form-label col-form-label-sm">Name</label>
+            <div class="col-7">
+              <input type="text" class="form-control form-control-sm" id="pfName"
+                     maxlength="40" required>
+            </div>
+          </div>
+          <div class="row mb-2 align-items-center">
+            <label for="pfMaxMargin" class="col-5 col-form-label col-form-label-sm">Max Margin ($1k steps)</label>
+            <div class="col-7">
+              <input type="number" class="form-control form-control-sm" id="pfMaxMargin"
+                     step="1000" min="0" max="10000000" required>
+            </div>
+          </div>
+          <div class="row mb-2 align-items-center">
+            <label for="pfMultiplier" class="col-5 col-form-label col-form-label-sm">Multiplier (0.5–4.0)</label>
+            <div class="col-7">
+              <input type="number" class="form-control form-control-sm" id="pfMultiplier"
+                     step="0.1" min="0.5" max="4.0" required>
+            </div>
+          </div>
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="pfDefault">
+            <label class="form-check-label small" for="pfDefault">Default portfolio</label>
+          </div>
+        </form>
+      </div>
+      <div class="modal-footer py-1">
+        <button type="submit" form="portfolioForm" class="btn btn-primary btn-sm">Save</button>
         <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
       </div>
     </div>

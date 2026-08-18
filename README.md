@@ -121,14 +121,33 @@ Debit spread:     0  (max loss is the debit paid, not tracked)
 STOCK:            long_shares × long_cost ÷ 1000  ($k)
 ```
 
+## Portfolios
+
+Positions belong to one of up to 10 named portfolios (names are unique ignoring
+case). Each portfolio carries its own margin settings:
+
+| Setting | Default | Description |
+|---|---|---|
+| Max Margin | $250,000 | Margin ceiling for that portfolio ($1k increments) |
+| Multiplier | 1.5 | Multiplier applied to the ceiling (0.5 – 4.0) |
+
+Available margin for a portfolio is `Max Margin/1000 × Multiplier − margin in use`;
+the "All" row at the top of the page is the same figure aggregated over every
+portfolio. Portfolios are created, edited and deleted from the Configuration
+card at the bottom of the page. Exactly one portfolio is the **default**: it is
+pre-selected in the Add Position form (choosing a different one there makes
+*that* the default, so you can work one account at a time), it cannot be
+deleted, and deleting any other portfolio moves its positions into it. On an
+empty database a portfolio named **Main** is created and made the default.
+
 ## Configuration
 
 | Parameter | Default | Description |
 |---|---|---|
-| `MaximumMarginBasis` | $250,000 | Total margin ceiling ($1k increments) |
-| `MarginMultiplier` | 1.5 | Multiplier applied to individual position margins (0.5 – 4.0) |
+| `RiskFreeRate` | 4.5 % | Risk-free rate used for option pricing / greeks |
+| `SortOrder` | `expiry` | Default table sort (`alpha`, `expiry`, `type`) |
 
-Configuration is stored in the `config` table and editable from the bottom panel of the UI.
+Stored in `data/marginwatch.cfg`; the rate is editable from the Configuration card.
 
 ## Environment Variables
 
@@ -136,6 +155,14 @@ Configuration is stored in the `config` table and editable from the bottom panel
 |---|---|---|
 | `MARGIN_PWD` | Yes | Password for the web UI login page. The server refuses to start without it. |
 | `MARGIN_DEBUG` | No | Set to `1` to enable debug endpoints (see below). Omit or set to any other value to disable. |
+
+### Snapshot API (for external dashboards)
+
+`GET /api/snapshot` returns the whole page — every position, live prices, greeks and
+the margin/theta summary — as one JSON document. It authenticates with `MARGIN_PWD`
+sent as an `Authorization: Bearer <password>` (or `X-Api-Key`) header, so tools like
+Glance can poll it without a browser session. Full field reference:
+[docs/SNAPSHOT_API.md](docs/SNAPSHOT_API.md).
 
 ### Debug endpoints (require `MARGIN_DEBUG=1`)
 
