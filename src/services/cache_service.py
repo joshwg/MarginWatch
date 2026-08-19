@@ -10,9 +10,9 @@ import services.market_data_service as mds
 import services.position_service as ps
 
 _PRICE_TTL = 600.0  # seconds before a cached stock price is considered stale
-_BARS_TTL  = 900.0  # seconds before the sparkline's price bars are re-fetched
 BARS_DAYS     = 7    # sparkline lookback, calendar days
-BARS_INTERVAL = "1h" # sparkline bar size
+BARS_INTERVAL = "1h" # sparkline bar size; bars are re-fetched just after each
+                     # bar closes (mds.bars_cache_ttl), not on a fixed timer
 
 # Theta clipping: caps the raw per-share, per-day theta returned by cache.theta()
 # to guard against blow-ups when pricing data is degenerate.
@@ -53,7 +53,7 @@ class CacheService:
         self._sector: dict[str, str | None] = {}
         # Same for the company name, which is display-only (hover on a position).
         self._company_name: dict[str, str | None] = {}
-        # Sparkline bars: symbol → (fetched_at, [bar, ...]).  Display-only, so
+        # Sparkline bars: symbol → (expires_at, [bar, ...]).  Display-only, so
         # not touched by the session rollover either; they age out on their own.
         self._bars: dict[str, tuple[float, list[dict]]] = {}
         # symbol → short error description; persists until cache is reset
@@ -280,16 +280,19 @@ class CacheService:
     # ------------------------------------------------------------------
     # Private fetchers
     def fetch_bars(self, symbol: str) -> list[dict]:
-        """Sparkline bars for *symbol*, re-fetched once they are older than _BARS_TTL.
+        """Sparkline bars for *symbol*, re-fetched once the current bar has closed.
 
-        A fetch that comes back empty is cached too (as []), so a symbol the
-        provider has no history for is not retried on every pass.
+        Hourly bars only change on the hour, so the cache entry expires a
+        couple of minutes past the next boundary rather than on a timer — one
+        fetch per symbol per bar, and the new candle shows up soon after it
+        completes.  A fetch that comes back empty is cached too (as []), so a
+        symbol the provider has no history for is not retried on every pass.
         """
         with self._symbol_lock(symbol):
             entry = self._bars.get(symbol)
-            if entry is None or time.time() - entry[0] > _BARS_TTL:
+            if entry is None or time.time() >= entry[0]:
                 bars = mds.fetch_price_bars(symbol, days=BARS_DAYS, interval=BARS_INTERVAL)
-                self._bars[symbol] = (time.time(), bars)
+                self._bars[symbol] = (time.time() + mds.bars_cache_ttl(BARS_INTERVAL), bars)
             return self._bars[symbol][1]
 
     def fetch_all_bars(self, symbols: set[str]) -> dict[str, list[dict]]:

@@ -450,6 +450,11 @@ function _optSortValue(optStr) {
 // Column sort (multi-key)
 // ---------------------------------------------------------------------------
 
+/** Columns that sort.  The single source of truth — header clicks and saved
+ *  chains are both checked against it, so a stale template or an old saved
+ *  key can never put an unsortable column into the chain. */
+const SORTABLE_COLS = new Set(['portfolio', 'position', 'sector', 'qty', 'margin', 'opt', 'theta', 'theta_norm']);
+
 /** The value a row sorts on for *col*.  Unknown / missing values sort to the
  *  bottom in ascending order (-Infinity for numbers, '￿' for text). */
 function _sortValue(pos, col) {
@@ -497,6 +502,7 @@ function _sortRows(rows) {
  *  the whole sort.  *stack* (Shift/Ctrl-click, or any tap on touch): the
  *  column is added to the end of the chain, or cycled in place if present. */
 function onSortColumn(col, stack) {
+    if (!SORTABLE_COLS.has(col)) return;   // a header this build does not sort on
     const idx = _sortKeys.findIndex(k => k.col === col);
     const cur = idx === -1 ? null : _sortKeys[idx].dir;
     const next = cur === null ? 'asc' : cur === 'asc' ? 'desc' : null;
@@ -532,10 +538,8 @@ function _loadSortKeys() {
         const keys = raw ? JSON.parse(raw) : [];
         // Only columns that are sortable today survive: a key saved by an
         // older build for a column that no longer sorts is dropped.
-        const sortable = new Set([...document.querySelectorAll('#positionsTable thead th.sortable')]
-                                 .map(th => th.dataset.col));
         _sortKeys = Array.isArray(keys)
-            ? keys.filter(k => k && sortable.has(k.col) && (k.dir === 'asc' || k.dir === 'desc'))
+            ? keys.filter(k => k && SORTABLE_COLS.has(k.col) && (k.dir === 'asc' || k.dir === 'desc'))
             : [];
     } catch (_) { _sortKeys = []; }
 }
@@ -1100,15 +1104,14 @@ function mkRowBtn(label, handler) {
 }
 
 function updateColHeaders() {
-    const labels = {
-        portfolio: 'Pf', position: 'Position', sector: 'Sector', qty: '#', margin: 'Margin',
-        opt: '$/shr', theta: 'Theta', theta_norm: 'θ/10k',
-    };
     const multi = _sortKeys.length > 1;
     document.querySelectorAll('#positionsTable thead th.sortable').forEach(th => {
         const col = th.dataset.col;
         const idx = _sortKeys.findIndex(k => k.col === col);
-        let text = labels[col];
+        // The bare label is the header's own text, remembered the first time
+        // through — never a lookup that could come back undefined.
+        if (th.dataset.label == null) th.dataset.label = th.textContent.replace(/\s*\d*[▲▼]$/, '').trim();
+        let text = th.dataset.label;
         if (idx !== -1) {
             // Rank number only when there is more than one key — "Margin 2▼"
             // says it breaks ties in key 1; a lone "Margin ▼" needs no number.

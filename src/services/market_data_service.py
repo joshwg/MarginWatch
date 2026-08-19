@@ -323,6 +323,17 @@ def fetch_company_name(symbol: str) -> str | None:
         return None
 
 
+def bars_cache_ttl(interval: str) -> int:
+    """Seconds until a set of *interval* bars should be re-fetched: just past the
+    next bar boundary (option_lib.math_util.bars_cache_ttl), or an hour if
+    option_lib is missing."""
+    try:
+        from option_lib.math_util import bars_cache_ttl as _ttl
+        return _ttl(interval)
+    except Exception:
+        return 3600
+
+
 def fetch_price_bars(symbol: str, days: int = 7, interval: str = "1h") -> list[dict]:
     """Recent OHLC bars for the sparkline: [{'t','o','h','l','c','v'}, ...], oldest first.
 
