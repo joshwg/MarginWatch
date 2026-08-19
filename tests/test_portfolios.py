@@ -16,8 +16,7 @@ API
   6. CRUD round trip through /api/portfolios.
   7. /api/positions summary: per-portfolio rows plus the "All" aggregate,
      and every row carries its portfolio tag.
-  8. Adding a position to a non-default portfolio makes it the default;
-     editing a position does not.
+  8. Neither adding nor editing a position changes the default portfolio.
 """
 
 import json
@@ -218,16 +217,17 @@ def test_summary_per_portfolio(env):
     assert snap["positions"][0]["portfolio"] in ("Main", "IRA")
 
 
-def test_add_sets_default_but_edit_does_not(env):
+def test_position_add_edit_leave_default_alone(env):
     client = env
     import repositories.portfolios_repository as pf
     main = pf.get_default()
     ira_id = pf.create("IRA", 200000, 1.5)
     assert _post(client, "/api/positions", _pos(portfolio_id=ira_id)).status_code == 200
-    assert pf.get_default().id == ira_id
+    assert pf.get_default().id == main.id                      # unchanged
     pid = client.get("/api/positions").get_json()["positions"][0]["id"]
+    assert client.get(f"/api/positions/{pid}").get_json()["portfolio_id"] == ira_id
     assert _put(client, f"/api/positions/{pid}", _pos(portfolio_id=main.id)).status_code == 200
-    assert pf.get_default().id == ira_id                       # unchanged
+    assert pf.get_default().id == main.id                      # still unchanged
     assert client.get(f"/api/positions/{pid}").get_json()["portfolio_id"] == main.id
     # unknown portfolio is refused
     assert _post(client, "/api/positions", _pos(portfolio_id=999)).status_code == 400

@@ -1,7 +1,12 @@
 'use strict';
 
 let _positions = [];
-let _colSort = null;   // { col: string, dir: 'asc'|'desc' } | null
+// Multi-column sort: ordered chain of { col, dir } — index 0 is the primary
+// key, each later entry breaks ties in the one before it.  Empty means "the
+// server's order" (the A-Z / Exp / Type radios).  See onSortColumn().
+let _sortKeys = [];
+const SORT_KEYS_STORAGE = 'mw.sortKeys';   // localStorage key (per device)
+const SORT_HOLD_MS = 450;                   // touch: press-and-hold to stack a sort key
 let _editId = null;    // null = adding new, number = editing existing
 let _posModal = null;
 let _confirmModal = null;
@@ -10,6 +15,8 @@ let _loadCtrl = null;          // AbortController for the in-flight loadPosition
 let _loadSeq  = 0;             // generation counter — only the newest load may touch the table
 let _sortQueued = false;       // sort changed mid-load: re-sort once the pull finishes
 let _lastFetchSymbol = '';     // symbol the progress poller last reported
+let _bars = {};                // symbol → [[epoch_ms, o, h, l, c], ...] oldest first (phase 3)
+let _barsMeta = { days: 7, interval: '1h' };
 let _portfolios = [];          // [{id, name, abbrev, max_margin, multiplier, is_default}]
 let _maxPortfolios = 10;
 let _pfModal = null;
@@ -35,10 +42,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     await loadPortfolios();
     loadPositions();
 
+    _loadSortKeys();
+    updateColHeaders();
+
     document.querySelectorAll('input[name="sort"]').forEach(r =>
         r.addEventListener('change', () => {
-            _colSort = null;
-            updateColHeaders();
+            // A radio is the "back to plain order" control, on touch the only
+            // one: it drops the whole column-sort chain.
+            _setSortKeys([]);
             // A price pull already running must not be thrown away — every
             // symbol it has fetched would have to be fetched again. Queue the
             // reload instead; loadPositions() reads the radio when it starts,
@@ -52,18 +63,37 @@ document.addEventListener('DOMContentLoaded', async () => {
         })
     );
 
-    document.querySelectorAll('#positionsTable thead th.sortable').forEach(th =>
-        th.addEventListener('click', () => {
-            const col = th.dataset.col;
-            if (_colSort?.col === col) {
-                _colSort = _colSort.dir === 'asc' ? { col, dir: 'desc' } : null;
-            } else {
-                _colSort = { col, dir: 'asc' };
-            }
-            updateColHeaders();
-            renderTable();
-        })
-    );
+    document.querySelectorAll('#positionsTable thead th.sortable').forEach(th => {
+        // Appended, not assigned: Pf and 7d carry their own hints in the
+        // template ("Portfolio", "hover / tap for detail") that must survive.
+        const sortHint = _isTouch
+            ? 'Tap to sort · press and hold to add a secondary sort'
+            : 'Click to sort · Shift+click to add a secondary sort';
+        th.title = th.title ? `${th.title} · ${sortHint}` : sortHint;
+        // Desktop: Shift/Ctrl-click stacks.  Touch has no modifier keys, so a
+        // press-and-hold stacks instead; the click that follows the release
+        // is swallowed so the column is not immediately re-cycled.
+        let holdTimer = null, held = false;
+        const cancelHold = () => { if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; } };
+        if (_isTouch) {
+            th.addEventListener('pointerdown', () => {
+                held = false;
+                cancelHold();
+                holdTimer = setTimeout(() => {
+                    holdTimer = null;
+                    held = true;
+                    onSortColumn(th.dataset.col, true);
+                }, SORT_HOLD_MS);
+            });
+            ['pointerup', 'pointercancel', 'pointerleave'].forEach(ev =>
+                th.addEventListener(ev, cancelHold));
+            th.addEventListener('contextmenu', e => e.preventDefault());
+        }
+        th.addEventListener('click', e => {
+            if (held) { held = false; return; }
+            onSortColumn(th.dataset.col, e.shiftKey || e.ctrlKey || e.metaKey);
+        });
+    });
 
     document.getElementById('fSymbol').addEventListener('input', function () {
         const pos = this.selectionStart;
@@ -157,6 +187,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('btnAssigned').addEventListener('click', applyAssigned);
     document.getElementById('btnClearCover').addEventListener('click', applyClearCover);
     document.getElementById('btnAddPortfolio').addEventListener('click', openAddPortfolio);
+
+    // Widening past the breakpoint after loading narrow: the column appears
+    // with empty cells, so run a load to fill them (server-cached, so cheap).
+    _narrowMq.addEventListener('change', e => {
+        if (!e.matches && !Object.keys(_bars).length && !_loadCtrl) loadPositions();
+    });
     document.getElementById('portfolioForm').addEventListener('submit', savePortfolio);
 
     // Touch: a tap outside the table dismisses a visible tooltip.
@@ -266,7 +302,33 @@ async function loadPositions() {
     _stopProgressPolling();
     renderTable();   // re-render with live prices filled in
     _refreshTooltipText();   // a hover-triggered refresh updates the open tooltip
-    drain();         // prices are in — now apply any sort that arrived meanwhile
+
+    // ── Phase 3: 7-day price bars for the sparklines ─────────────────────────
+    // Cosmetic, so it runs last and never holds up the table; the cells are
+    // fixed-size placeholders until the bars land and are then filled in place
+    // rather than by a third full re-render (which would yank a hovered row).
+    if (_sparkHidden()) { drain(); return; }   // column not shown — skip the fetch
+    _startProgressPolling();
+    try {
+        const resp = await fetch('/api/bars', { signal: ctrl.signal });
+        const data = resp.ok ? await resp.json() : null;
+        // Checked before anything is touched — on every path, not just the
+        // happy one: a newer load owns the table and the progress poller now,
+        // and the tail below must not stop *its* poller.
+        if (!isCurrent()) return;
+        if (data) {
+            _bars = data.bars || {};
+            if (data.days)     _barsMeta.days     = data.days;
+            if (data.interval) _barsMeta.interval = data.interval;
+            _updateSparkCells();
+            _refreshTooltipText();   // an open chart popup picks up the new bars
+        }
+    } catch (e) {
+        if (e.name === 'AbortError' || !isCurrent()) return;
+        console.error('[MarginWatch] bars fetch failed:', e);
+    }
+    _stopProgressPolling();
+    drain();         // everything is in — now apply any sort that arrived meanwhile
 }
 
 /** Progress text: the symbol being fetched, plus a note when a sort change is
@@ -384,40 +446,111 @@ function _optSortValue(optStr) {
     return isNaN(n) ? -Infinity : n;
 }
 
+// ---------------------------------------------------------------------------
+// Column sort (multi-key)
+// ---------------------------------------------------------------------------
+
+/** The value a row sorts on for *col*.  Unknown / missing values sort to the
+ *  bottom in ascending order (-Infinity for numbers, '￿' for text). */
+function _sortValue(pos, col) {
+    switch (col) {
+        case 'position':   return pos.abbrev;
+        case 'portfolio':  return (pos.portfolio || '').toLowerCase();
+        case 'sector':     return pos.sector || '￿';
+        case 'qty':        return pos.qty;
+        case 'margin':     return pos.margin;
+        case 'opt':        return _optSortValue(pos.opt_str);
+        case 'theta':      return pos.theta_dollars ?? -Infinity;
+        case 'theta_norm': return pos.theta_norm ?? -Infinity;
+        default:           return null;   // unknown column — no effect
+    }
+}
+
+/** The chain as actually applied.  Sorting by portfolio implies sorting by
+ *  position name within each portfolio, so an implicit "Position ▲" is
+ *  appended whenever Pf is in the chain and Position is not — at the end, so
+ *  any explicit secondary keys (Pf, then Margin) still take precedence. */
+function _effectiveSortKeys() {
+    const hasPf   = _sortKeys.some(k => k.col === 'portfolio');
+    const hasName = _sortKeys.some(k => k.col === 'position');
+    return hasPf && !hasName ? [..._sortKeys, { col: 'position', dir: 'asc' }] : _sortKeys;
+}
+
+/** Sort by the chain: the first key that differs decides; equal rows keep
+ *  the order they arrived in (Array.sort is stable), i.e. the server's. */
+function _sortRows(rows) {
+    const keys = _effectiveSortKeys();
+    return [...rows].sort((a, b) => {
+        for (const { col, dir } of keys) {
+            const va = _sortValue(a, col), vb = _sortValue(b, col);
+            if (va == null || vb == null) continue;
+            let cmp = 0;
+            if (va < vb) cmp = -1;
+            else if (va > vb) cmp = 1;
+            if (cmp !== 0) return dir === 'asc' ? cmp : -cmp;
+        }
+        return 0;
+    });
+}
+
+/** Header click.  A column cycles ▲ → ▼ → off.  Plain click: that column is
+ *  the whole sort.  *stack* (Shift/Ctrl-click, or any tap on touch): the
+ *  column is added to the end of the chain, or cycled in place if present. */
+function onSortColumn(col, stack) {
+    const idx = _sortKeys.findIndex(k => k.col === col);
+    const cur = idx === -1 ? null : _sortKeys[idx].dir;
+    const next = cur === null ? 'asc' : cur === 'asc' ? 'desc' : null;
+    let keys;
+    if (stack) {
+        keys = _sortKeys.filter(k => k.col !== col);
+        if (next) {
+            if (idx === -1) keys.push({ col, dir: next });
+            else            keys.splice(idx, 0, { col, dir: next });
+        }
+    } else {
+        // Single sort: the column's own cycle continues only if it was the
+        // sole key; otherwise it starts fresh as the one ascending key.
+        const sole = _sortKeys.length === 1 && idx === 0;
+        keys = sole ? (next ? [{ col, dir: next }] : []) : [{ col, dir: 'asc' }];
+    }
+    _setSortKeys(keys);
+    renderTable();
+}
+
+function _setSortKeys(keys) {
+    _sortKeys = keys;
+    updateColHeaders();
+    try {
+        if (keys.length) localStorage.setItem(SORT_KEYS_STORAGE, JSON.stringify(keys));
+        else             localStorage.removeItem(SORT_KEYS_STORAGE);
+    } catch (_) { /* private mode / storage disabled — sort still works this visit */ }
+}
+
+function _loadSortKeys() {
+    try {
+        const raw = localStorage.getItem(SORT_KEYS_STORAGE);
+        const keys = raw ? JSON.parse(raw) : [];
+        // Only columns that are sortable today survive: a key saved by an
+        // older build for a column that no longer sorts is dropped.
+        const sortable = new Set([...document.querySelectorAll('#positionsTable thead th.sortable')]
+                                 .map(th => th.dataset.col));
+        _sortKeys = Array.isArray(keys)
+            ? keys.filter(k => k && sortable.has(k.col) && (k.dir === 'asc' || k.dir === 'desc'))
+            : [];
+    } catch (_) { _sortKeys = []; }
+}
+
 function renderTable() {
     let items = [..._positions];
 
-    if (_colSort) {
-        const { col, dir } = _colSort;
-        items.sort((a, b) => {
-            let va, vb;
-            if      (col === 'position')   { va = a.abbrev;       vb = b.abbrev; }
-            else if (col === 'portfolio')  { va = (a.portfolio || '').toLowerCase();
-                                             vb = (b.portfolio || '').toLowerCase(); }
-            // Unknown sectors group together at the end rather than under ''.
-            else if (col === 'sector')     { va = a.sector || '￿';
-                                             vb = b.sector || '￿'; }
-            else if (col === 'qty')        { va = a.qty;          vb = b.qty; }
-            else if (col === 'margin')     { va = a.margin;       vb = b.margin; }
-            else if (col === 'opt')        { va = _optSortValue(a.opt_str);
-                                             vb = _optSortValue(b.opt_str); }
-            else if (col === 'theta')      { va = a.theta_dollars ?? -Infinity;
-                                             vb = b.theta_dollars ?? -Infinity; }
-            else if (col === 'theta_norm') { va = a.theta_norm ?? -Infinity;
-                                             vb = b.theta_norm ?? -Infinity; }
-            else return 0;  // unknown column — preserve existing order
-            if (va < vb) return dir === 'asc' ? -1 : 1;
-            if (va > vb) return dir === 'asc' ?  1 : -1;
-            return 0;
-        });
-    }
+    if (_sortKeys.length) items = _sortRows(items);
 
     const tbody = document.getElementById('positionsBody');
     tbody.innerHTML = '';
 
     if (items.length === 0) {
         tbody.innerHTML =
-            '<tr><td colspan="9" class="text-center text-muted py-3">No open positions.</td></tr>';
+            '<tr><td colspan="10" class="text-center text-muted py-3">No open positions.</td></tr>';
         return;
     }
 
@@ -488,7 +621,7 @@ function renderTable() {
         // The company name is shown by the cell's tooltip, not by a native
         // title here: a title would fire on top of the cell tooltip and put two
         // overlapping popups on screen saying different things.
-        if (pos.is_stock_row) nameSpan.className = 'mw-stock-pos';
+        nameSpan.className = 'mw-pos-label' + (pos.is_stock_row ? ' mw-stock-pos' : '');
         posCell.appendChild(nameSpan);
         if (pos.abbrev2) {
             const line2 = document.createElement('div');
@@ -501,6 +634,12 @@ function renderTable() {
         // the six that show the price, and a title would stack a second popup
         // on top of that one.
         const sectorCell = mkTd(sectorLabel(pos.sector), 'mw-sector-col');
+
+        // 7-day sparkline.  Empty placeholder until phase 3 fills it in.
+        const sparkCell = document.createElement('td');
+        sparkCell.className = 'mw-spark-col mw-spark-cell';
+        sparkCell.dataset.symbol = pos.symbol;
+        sparkCell.innerHTML = sparkSvg(_bars[pos.symbol]);
 
         const qtyCell    = mkTd(pos.qty,                   'text-center');
         const marginCell = mkTd(pos.margin.toFixed(1),     'text-end');
@@ -521,10 +660,170 @@ function renderTable() {
             actCell.appendChild(mergeBtn);
         }
 
-        tr.append(pfCell, posCell, sectorCell, qtyCell, marginCell, optCell, thetaCell, thetaNormCell, actCell);
+        tr.append(pfCell, posCell, sectorCell, sparkCell, qtyCell, marginCell, optCell, thetaCell, thetaNormCell, actCell);
         _addRowInteractions(tr, pos);
         tbody.appendChild(tr);
     }
+}
+
+// ---------------------------------------------------------------------------
+// 7-day sparkline + expanded OHLC chart
+// ---------------------------------------------------------------------------
+// Bars arrive in phase 3 as [epoch_ms, o, h, l, c] arrays, oldest first.  The
+// table cell shows a close-price line (too narrow for candles to read); the
+// hover / tap popup shows the same week as candlesticks with the position's
+// strike(s) drawn across it.
+
+const SPARK_W = 64, SPARK_H = 18;
+const CHART_W = 280, CHART_H = 180;     // ≈ 12 lines of text tall
+const COLOR_UP_ROW = '#15803d', COLOR_DN_ROW = '#b91c1c';   // on light row backgrounds
+const COLOR_UP_POP = '#4ade80', COLOR_DN_POP = '#f87171';   // on the dark popup
+
+/** Narrow window: the 7d column is hidden by CSS, so the bars are not worth
+ *  fetching.  Matches the breakpoint in style.css. */
+const _narrowMq = window.matchMedia('(max-width: 599px)');
+function _sparkHidden() { return _narrowMq.matches; }
+
+/** Refill every sparkline cell in place — no row re-render, so a hovered row
+ *  stays put and the open tooltip (if any) is untouched. */
+function _updateSparkCells() {
+    document.querySelectorAll('#positionsBody td.mw-spark-cell').forEach(td => {
+        td.innerHTML = sparkSvg(_bars[td.dataset.symbol]);
+    });
+}
+
+/** Small close-price line for the table cell; '' when there are no bars. */
+function sparkSvg(bars) {
+    if (!bars || bars.length < 2) return '';
+    const closes = bars.map(b => b[4]);
+    let lo = Math.min(...closes), hi = Math.max(...closes);
+    if (hi === lo) { hi += 0.5; lo -= 0.5; }
+    const w = SPARK_W, h = SPARK_H, pad = 1.5;
+    const x = i => (i / (closes.length - 1)) * w;
+    const y = v => pad + (hi - v) / (hi - lo) * (h - 2 * pad);
+    const pts = closes.map((c, i) => `${x(i).toFixed(1)},${y(c).toFixed(1)}`).join(' ');
+    const up = closes[closes.length - 1] >= bars[0][1];
+    const color = up ? COLOR_UP_ROW : COLOR_DN_ROW;
+    const lastX = x(closes.length - 1).toFixed(1), lastY = y(closes[closes.length - 1]).toFixed(1);
+    return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-hidden="true">` +
+           `<polygon points="0,${h} ${pts} ${w},${h}" fill="${color}" fill-opacity="0.12"/>` +
+           `<polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.3" ` +
+           `vector-effect="non-scaling-stroke" stroke-linejoin="round"/>` +
+           `<circle cx="${lastX}" cy="${lastY}" r="1.6" fill="${color}"/>` +
+           `</svg>`;
+}
+
+function _fmtPrice(v) {
+    if (v == null || !isFinite(v)) return '—';
+    return v >= 1000 ? v.toFixed(0) : v >= 100 ? v.toFixed(1) : v.toFixed(2);
+}
+
+function _esc(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+}
+
+/** Expanded candlestick chart for the popup; '' when the bars are not in yet. */
+function chartSvg(pos) {
+    const bars = _bars[pos.symbol];
+    if (!bars || bars.length < 2) return '';
+
+    const W = CHART_W, H = CHART_H;
+    const mL = 6, mR = 46, mT = 20, mB = 16;
+    const pw = W - mL - mR, ph = H - mT - mB;
+    const n = bars.length;
+
+    // Y domain: the bars, padded, stretched to take in a strike that is near
+    // enough to be worth seeing (a strike half a chart away would squash the
+    // candles into a line, so it is left off and only named in the title).
+    let lo = Math.min(...bars.map(b => b[3])), hi = Math.max(...bars.map(b => b[2]));
+    if (hi === lo) { hi += 0.5; lo -= 0.5; }
+    let range = hi - lo;
+    lo -= range * 0.04; hi += range * 0.04;
+    const strikes = [];
+    if (pos.strike)  strikes.push(pos.strike);
+    if (pos.strike2) strikes.push(pos.strike2);
+    const shown = [];
+    for (const k of strikes) {
+        if (k > lo - range * 0.5 && k < hi + range * 0.5) {
+            lo = Math.min(lo, k - range * 0.03); hi = Math.max(hi, k + range * 0.03);
+            shown.push(k);
+        }
+    }
+    const x = i => mL + (i + 0.5) * (pw / n);
+    const y = v => mT + (hi - v) / (hi - lo) * ph;
+    const slot = pw / n, bodyW = Math.max(1.2, Math.min(7, slot * 0.62));
+
+    const out = [];
+    // Day boundaries — faint rule where the date rolls over, weekday label
+    // centred under each day's bars (ET, the exchange's clock).
+    const dayOf = t => new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York',
+                                                          weekday: 'short', day: 'numeric' })
+                           .formatToParts(new Date(t));
+    let dayStart = 0, prevKey = null;
+    const days = [];
+    bars.forEach((b, i) => {
+        const parts = dayOf(b[0]);
+        const key = parts.map(p => p.value).join('');
+        if (prevKey !== null && key !== prevKey) { days.push([dayStart, i - 1, prevKey]); dayStart = i; }
+        prevKey = key;
+    });
+    days.push([dayStart, n - 1, prevKey]);
+    days.forEach(([a, z, key], j) => {
+        if (j > 0) {
+            const xb = mL + a * slot;
+            out.push(`<line x1="${xb.toFixed(1)}" y1="${mT}" x2="${xb.toFixed(1)}" y2="${mT + ph}" ` +
+                     `stroke="rgba(255,255,255,0.12)"/>`);
+        }
+        const label = key.replace(/[0-9]/g, '').trim();
+        const cx = (x(a) + x(z)) / 2;
+        out.push(`<text x="${cx.toFixed(1)}" y="${H - 4}" font-size="9" fill="#aaa" ` +
+                 `text-anchor="middle">${label}</text>`);
+    });
+
+    // Strike lines
+    for (const k of shown) {
+        const yk = y(k).toFixed(1);
+        out.push(`<line x1="${mL}" y1="${yk}" x2="${mL + pw}" y2="${yk}" stroke="#facc15" ` +
+                 `stroke-width="1" stroke-dasharray="4 3"/>`);
+        out.push(`<text x="${mL + pw + 3}" y="${(+yk + 3).toFixed(1)}" font-size="9" fill="#facc15">` +
+                 `K ${_fmtPrice(k)}</text>`);
+    }
+
+    // Candles
+    for (let i = 0; i < n; i++) {
+        const [, o, h, l, c] = bars[i];
+        const up = c >= o;
+        const color = up ? COLOR_UP_POP : COLOR_DN_POP;
+        const cx = x(i).toFixed(1);
+        out.push(`<line x1="${cx}" y1="${y(h).toFixed(1)}" x2="${cx}" y2="${y(l).toFixed(1)}" ` +
+                 `stroke="${color}" stroke-width="1"/>`);
+        const top = y(Math.max(o, c)), bot = y(Math.min(o, c));
+        const bh = Math.max(1, bot - top);
+        out.push(`<rect x="${(x(i) - bodyW / 2).toFixed(1)}" y="${top.toFixed(1)}" ` +
+                 `width="${bodyW.toFixed(1)}" height="${bh.toFixed(1)}" fill="${color}"/>`);
+    }
+
+    // Axis labels: window high / low on the right edge — skipped when a strike
+    // label already sits there, so the two never print on top of each other.
+    const barHi = Math.max(...bars.map(b => b[2])), barLo = Math.min(...bars.map(b => b[3]));
+    for (const v of [barHi, barLo]) {
+        if (shown.some(k => Math.abs(y(k) - y(v)) < 10)) continue;
+        out.push(`<text x="${mL + pw + 3}" y="${(y(v) + 3).toFixed(1)}" font-size="9" fill="#ddd">${_fmtPrice(v)}</text>`);
+    }
+
+    // Title: symbol, window, last close and change
+    const last = bars[n - 1][4], first = bars[0][1];
+    const chg = first ? (last - first) / first * 100 : null;
+    const chgColor = chg == null ? '#ddd' : chg >= 0 ? COLOR_UP_POP : COLOR_DN_POP;
+    const offStrikes = strikes.filter(k => !shown.includes(k)).map(k => `K ${_fmtPrice(k)} off-chart`);
+    const title = `${_esc(pos.symbol)} · ${_barsMeta.days}d ${_esc(_barsMeta.interval)}` +
+                  (offStrikes.length ? ` · ${_esc(offStrikes.join(', '))}` : '');
+    out.push(`<text x="${mL}" y="13" font-size="11" font-weight="600" fill="#fff">${title}</text>`);
+    out.push(`<text x="${W - 4}" y="13" font-size="11" text-anchor="end" fill="${chgColor}">` +
+             `${_fmtPrice(last)}${chg == null ? '' : ` (${chg >= 0 ? '+' : ''}${chg.toFixed(1)}%)`}</text>`);
+
+    return `<svg class="mw-chart" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" ` +
+           `role="img" aria-label="${_esc(pos.symbol)} 7-day price chart">${out.join('')}</svg>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -539,6 +838,7 @@ function renderTable() {
 const TIP_NAME  = 'name';    // company name — the Position column
 const TIP_PRICE = 'price';   // underlier price — the six data columns
 const TIP_PF    = 'pf';      // full portfolio name — the Pf column
+const TIP_CHART = 'chart';   // expanded 7-day OHLC chart — the sparkline column
 
 let _hoverTimer = null;   // hover delay timer handle
 let _hideTimer  = null;   // auto-dismiss timer handle (touch)
@@ -551,6 +851,7 @@ function _cellTipKind(td) {
     if (!td)                                       return null;
     if (td.classList.contains('mw-actions-cell'))  return null;
     if (td.classList.contains('mw-pf-col'))        return TIP_PF;
+    if (td.classList.contains('mw-spark-cell'))    return TIP_CHART;
     if (td.classList.contains('mw-position-cell')) return TIP_NAME;
     return TIP_PRICE;
 }
@@ -628,6 +929,11 @@ function _refreshTooltipText() {
     if (_tipPosId == null || tip.style.display === 'none') return;
     const pos = _positions.find(p => p.id === _tipPosId);
     if (!pos) return;
+    if (_tipKind === TIP_CHART) {
+        const html = chartSvg(pos);
+        if (html) tip.innerHTML = html;
+        return;
+    }
     const text = _tipTextFor(pos, _tipKind);
     if (text != null) tip.textContent = text;
 }
@@ -639,9 +945,15 @@ function showCellTooltip(pos, kind, clientX, clientY) {
     // have now and _refreshTooltipText() updates it in place when the fetch
     // lands.  Only the price goes stale, so only the price rung triggers it.
     if (kind === TIP_PRICE && _priceIsStale(pos) && !_loadCtrl) loadPositions();
-    const text = _tipTextFor(pos, kind);
-    if (text == null) return false;
-    showTipText(text, clientX, clientY);
+    if (kind === TIP_CHART) {
+        const html = chartSvg(pos);
+        if (!html) return false;          // bars not in yet — stay quiet
+        showTipHtml(html, clientX, clientY);
+    } else {
+        const text = _tipTextFor(pos, kind);
+        if (text == null) return false;
+        showTipText(text, clientX, clientY);
+    }
     _tipPosId = pos.id;
     _tipKind  = kind;
     return true;
@@ -649,10 +961,21 @@ function showCellTooltip(pos, kind, clientX, clientY) {
 
 /** Show arbitrary text in the tooltip, anchored near (clientX, clientY). */
 function showTipText(text, clientX, clientY) {
-    _tipPosId = null;
-    _tipKind  = null;
     const tip = document.getElementById('posTooltip');
     tip.textContent = text;
+    _placeTip(tip, clientX, clientY);
+}
+
+/** Show markup (the expanded chart) in the tooltip, anchored like showTipText. */
+function showTipHtml(html, clientX, clientY) {
+    const tip = document.getElementById('posTooltip');
+    tip.innerHTML = html;
+    _placeTip(tip, clientX, clientY);
+}
+
+function _placeTip(tip, clientX, clientY) {
+    _tipPosId = null;
+    _tipKind  = null;
     tip.style.display = 'block';
 
     const tw = tip.offsetWidth, th = tip.offsetHeight;
@@ -781,11 +1104,18 @@ function updateColHeaders() {
         portfolio: 'Pf', position: 'Position', sector: 'Sector', qty: '#', margin: 'Margin',
         opt: '$/shr', theta: 'Theta', theta_norm: 'θ/10k',
     };
+    const multi = _sortKeys.length > 1;
     document.querySelectorAll('#positionsTable thead th.sortable').forEach(th => {
         const col = th.dataset.col;
+        const idx = _sortKeys.findIndex(k => k.col === col);
         let text = labels[col];
-        if (_colSort?.col === col) text += _colSort.dir === 'asc' ? ' ▲' : ' ▼';
+        if (idx !== -1) {
+            // Rank number only when there is more than one key — "Margin 2▼"
+            // says it breaks ties in key 1; a lone "Margin ▼" needs no number.
+            text += (multi ? ` ${idx + 1}` : '') + (_sortKeys[idx].dir === 'asc' ? '▲' : '▼');
+        }
         th.textContent = text;
+        th.classList.toggle('mw-sorted', idx !== -1);
     });
 }
 
@@ -874,7 +1204,8 @@ function openAddModal() {
     _earningsDate = null;
     document.getElementById('positionModalTitle').textContent = 'Add Position';
     document.getElementById('positionForm').reset();
-    // Pre-select the default portfolio; the choice sticks (see savePosition).
+    // Pre-select the default portfolio.  Changing it here only affects this
+    // position; the default itself is set in the Configuration card.
     fillPortfolioSelect(_defaultPortfolioId());
     document.getElementById('fExpiration').value = nextOptionFriday();
     document.getElementById('fQty').value = '1';
@@ -945,9 +1276,6 @@ async function savePosition(e) {
         });
         if (resp.ok) {
             _posModal.hide();
-            // Adding to a portfolio makes it the default, so the list's
-            // default flag may have moved.
-            if (!_editId) loadPortfolios();
             loadPositions();
         } else {
             const body = await resp.json().catch(() => ({}));

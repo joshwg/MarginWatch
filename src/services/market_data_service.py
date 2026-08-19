@@ -323,6 +323,23 @@ def fetch_company_name(symbol: str) -> str | None:
         return None
 
 
+def fetch_price_bars(symbol: str, days: int = 7, interval: str = "1h") -> list[dict]:
+    """Recent OHLC bars for the sparkline: [{'t','o','h','l','c','v'}, ...], oldest first.
+
+    [] when the provider has nothing (or option_lib is missing); never raises.
+    option_lib caches the answer for ~15 minutes, so this is cheap to repeat.
+    """
+    try:
+        from option_lib.data_provider import get_provider
+        return get_provider().get_price_bars(symbol, days=days, interval=interval) or []
+    except ModuleNotFoundError:
+        _warn_missing_option_lib()
+        return []
+    except Exception as exc:
+        log.warning("fetch_price_bars(%s) failed: %s", symbol, exc)
+        return []
+
+
 def fetch_earnings_date(symbol: str) -> str | None:
     """Return the next upcoming earnings date as 'YYYY-MM-DD', or None."""
     try:

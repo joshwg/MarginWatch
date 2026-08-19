@@ -10,6 +10,9 @@ import services.market_data_service as mds
 import services.position_service as ps
 
 _PRICE_TTL = 600.0  # seconds before a cached stock price is considered stale
+_BARS_TTL  = 900.0  # seconds before the sparkline's price bars are re-fetched
+BARS_DAYS     = 7    # sparkline lookback, calendar days
+BARS_INTERVAL = "1h" # sparkline bar size
 
 # Theta clipping: caps the raw per-share, per-day theta returned by cache.theta()
 # to guard against blow-ups when pricing data is degenerate.
@@ -50,6 +53,9 @@ class CacheService:
         self._sector: dict[str, str | None] = {}
         # Same for the company name, which is display-only (hover on a position).
         self._company_name: dict[str, str | None] = {}
+        # Sparkline bars: symbol → (fetched_at, [bar, ...]).  Display-only, so
+        # not touched by the session rollover either; they age out on their own.
+        self._bars: dict[str, tuple[float, list[dict]]] = {}
         # symbol → short error description; persists until cache is reset
         self._failed: dict[str, str] = {}
         # Human-readable status of the in-progress fetch ("AAPL", "TSLA options", …)
@@ -134,6 +140,7 @@ class CacheService:
         self._delta     = {k: v for k, v in self._delta.items()     if k[0] != symbol}
         self._earnings.pop(symbol, None)
         self._sector.pop(symbol, None)
+        self._bars.pop(symbol, None)
 
     def fetch_all(self, positions: list[Position]) -> None:
         """Fetch any missing prices and greeks for all positions.
@@ -272,6 +279,28 @@ class CacheService:
 
     # ------------------------------------------------------------------
     # Private fetchers
+    def fetch_bars(self, symbol: str) -> list[dict]:
+        """Sparkline bars for *symbol*, re-fetched once they are older than _BARS_TTL.
+
+        A fetch that comes back empty is cached too (as []), so a symbol the
+        provider has no history for is not retried on every pass.
+        """
+        with self._symbol_lock(symbol):
+            entry = self._bars.get(symbol)
+            if entry is None or time.time() - entry[0] > _BARS_TTL:
+                bars = mds.fetch_price_bars(symbol, days=BARS_DAYS, interval=BARS_INTERVAL)
+                self._bars[symbol] = (time.time(), bars)
+            return self._bars[symbol][1]
+
+    def fetch_all_bars(self, symbols: set[str]) -> dict[str, list[dict]]:
+        """Bars for every symbol, fetching the missing/stale ones (progress reported)."""
+        out = {}
+        for sym in sorted(symbols):
+            self.current_fetch = f"{sym} chart"
+            out[sym] = self.fetch_bars(sym)
+        self.current_fetch = ""
+        return out
+
     # ------------------------------------------------------------------
 
     def _fetch_prices(self, positions: list[Position]) -> None:

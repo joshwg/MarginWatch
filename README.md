@@ -135,10 +135,30 @@ Available margin for a portfolio is `Max Margin/1000 × Multiplier − margin in
 the "All" row at the top of the page is the same figure aggregated over every
 portfolio. Portfolios are created, edited and deleted from the Configuration
 card at the bottom of the page. Exactly one portfolio is the **default**: it is
-pre-selected in the Add Position form (choosing a different one there makes
-*that* the default, so you can work one account at a time), it cannot be
+pre-selected in the Add Position form (you can pick another portfolio per
+position; the default only changes from the Configuration card), it cannot be
 deleted, and deleting any other portfolio moves its positions into it. On an
 empty database a portfolio named **Main** is created and made the default.
+
+## Sorting
+
+The A-Z / Exp / Type radios pick the base order (saved server-side). Clicking a
+column header sorts by that column on top of it (▲ → ▼ → off). To sort by
+several columns, **Shift+click** (or Ctrl+click) further headers — on a phone,
+**press and hold** a header — to add them to the chain; headers then show their
+rank (`Margin 1▼`, `Theta 2▲`). Shift+clicking a chained column cycles it
+▲ → ▼ → removed; a plain click restarts with that column alone; choosing a radio
+clears the chain. The chain is remembered per browser (localStorage).
+
+## 7-day sparkline
+
+The `7d` column draws a small close-price line for each underlier over the
+last seven days (hourly bars from the market-data provider, cached for
+15 minutes). Hover it — tap on a tablet — to expand it into a candlestick
+chart with the position's strike(s) drawn across it. The bars load in a third
+phase after prices (`GET /api/bars`), so the table never waits on them. The
+column is not sortable, and on narrow windows (under 600 px, e.g. a phone's
+cover screen) it is hidden and the bars are not fetched.
 
 ## Configuration
 

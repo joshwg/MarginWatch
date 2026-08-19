@@ -34,6 +34,7 @@ import repositories.positions_repository as pos_repo
 import services.position_service as ps
 import ui_styles as styles
 from models import Portfolio, Position
+import services.cache_service as cache_service
 from services.cache_service import CacheService
 
 
@@ -622,6 +623,28 @@ def api_prices():
     })
 
 
+@app.route("/api/bars")
+def api_bars():
+    """Phase 3: 7-day price bars for every symbol in the book, for the sparklines.
+
+    Each bar is a compact array [epoch_ms, open, high, low, close] (2 dp),
+    oldest first; a symbol with no history maps to [].  Bars are cached
+    server-side for 15 minutes, so repeated loads are cheap.
+    """
+    symbols = {p.symbol for p in pos_repo.get_open_positions()}
+    raw = _cache.fetch_all_bars(symbols)
+    bars = {
+        sym: [[b["t"], round(b["o"], 2), round(b["h"], 2), round(b["l"], 2), round(b["c"], 2)]
+              for b in rows]
+        for sym, rows in raw.items()
+    }
+    return jsonify({
+        "bars": bars,
+        "days": cache_service.BARS_DAYS,
+        "interval": cache_service.BARS_INTERVAL,
+    })
+
+
 @app.route("/api/quote/<symbol>")
 def api_quote(symbol: str):
     """Return the cached (or freshly fetched) stock price and earnings date for use in the add-position form."""
@@ -725,10 +748,6 @@ def api_add_position():
     if d["portfolio_id"] is not None and pf_repo.get_portfolio(d["portfolio_id"]) is None:
         return jsonify({"error": "unknown portfolio"}), 400
     pos_repo.insert_position(d)
-    # The Add form's portfolio choice sticks: picking a portfolio there makes
-    # it the default, so the user can work one account at a time.
-    if d["portfolio_id"] is not None and d["portfolio_id"] != pf_repo.get_default().id:
-        pf_repo.set_default(d["portfolio_id"])
     symbol = d["symbol"]
     _cache.invalidate(symbol)
     threading.Thread(target=_prefetch_symbol, args=(symbol,), daemon=True).start()
