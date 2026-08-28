@@ -11,8 +11,9 @@ import services.position_service as ps
 
 _PRICE_TTL = 600.0  # seconds before a cached stock price is considered stale
 BARS_DAYS     = 7    # sparkline lookback, calendar days
-BARS_INTERVAL = "1h" # sparkline bar size; bars are re-fetched just after each
-                     # bar closes (mds.bars_cache_ttl), not on a fixed timer
+BARS_INTERVAL = "1h" # sparkline bar size; bars are re-fetched ~17 min after each
+                     # bar closes (mds.bars_cache_ttl — the feeds are 15-min
+                     # delayed), not on a fixed timer
 
 # Theta clipping: caps the raw per-share, per-day theta returned by cache.theta()
 # to guard against blow-ups when pricing data is degenerate.

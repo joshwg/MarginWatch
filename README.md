@@ -153,8 +153,8 @@ clears the chain. The chain is remembered per browser (localStorage).
 ## 7-day sparkline
 
 The `7d` column draws a small close-price line for each underlier over the
-last seven days (hourly bars from the market-data provider, re-fetched only
-after each hourly bar closes). Hover it — tap on a tablet — to expand it into a candlestick
+last seven days (hourly bars from the market-data provider, re-fetched ~17
+minutes after each hourly bar closes — the feeds are 15-minute delayed). Hover it — tap on a tablet — to expand it into a candlestick
 chart with the position's strike(s) drawn across it. The bars load in a third
 phase after prices (`GET /api/bars`), so the table never waits on them. The
 column is not sortable, and on narrow windows (under 600 px, e.g. a phone's

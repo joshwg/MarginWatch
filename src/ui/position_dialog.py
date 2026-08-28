@@ -38,6 +38,7 @@ class PositionDialog(tk.Toplevel):
         self.title("Add Position" if row is None else "Edit Position")
         self.resizable(True, True)
         self.result = None
+        self.assigned = False   # result came from the "Assigned" button
         self._row = row
         self._build(row)
         self.transient(parent)
@@ -327,7 +328,10 @@ class PositionDialog(tk.Toplevel):
         self._validate()
 
     def _assigned(self):
-        """Convert a naked PUT to a STOCK (long stock, no cover) position."""
+        """Convert a naked PUT to a STOCK (long stock, no cover) position.
+
+        The caller merges the result into an existing STOCK position of the
+        same symbol/portfolio, if there is one (see self.assigned)."""
         sym = self._sym.get().strip().upper()
         if not sym:
             messagebox.showerror("Error", "Symbol is required.", parent=self)
@@ -348,6 +352,7 @@ class PositionDialog(tk.Toplevel):
             "long_cost": strike,
             "strike2": None,
         }
+        self.assigned = True
         self.destroy()
 
     def _clear_cover(self):

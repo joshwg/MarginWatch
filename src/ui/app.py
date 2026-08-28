@@ -386,6 +386,15 @@ class MarginWatchApp(tk.Tk):
             # The desktop dialog has no portfolio picker; keep the row where it is.
             d.setdefault("portfolio_id", pos.portfolio_id)
             pos_repo.update_position(row_id, d)
+            if dlg.assigned:
+                # The put just became long stock: fold it into any existing
+                # STOCK position of the same symbol/portfolio (shares added,
+                # cost share-weight averaged).  No-op with nothing to merge.
+                saved = pos_repo.get_position(row_id)
+                if saved:
+                    pos_repo.merge_stock_positions(
+                        saved.symbol, saved.expiration,
+                        saved.strike or 0.0, saved.portfolio_id)
             self._cache.invalidate(d["symbol"])
             self._refresh_positions()
 

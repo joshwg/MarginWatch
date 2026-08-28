@@ -484,6 +484,29 @@ def api_positions():
 # Snapshot API (for external dashboards such as Glance)
 # ---------------------------------------------------------------------------
 
+_warm_lock = threading.Lock()
+
+
+def _warm_cache_async() -> bool:
+    """Refresh stale market data in the background; return False if a pass is
+    already running.  Used by ``/api/snapshot?cached=1&warm=1`` so a polling
+    dashboard gets an instant (possibly stale) answer now and fresh prices on
+    its next poll, instead of blocking for the serial per-symbol fetches."""
+    if not _warm_lock.acquire(blocking=False):
+        return False
+
+    def run() -> None:
+        try:
+            _cache.fetch_all(pos_repo.get_open_positions())
+        except Exception:
+            app.logger.exception("background warm of market data failed")
+        finally:
+            _warm_lock.release()
+
+    threading.Thread(target=run, name="snapshot-warm", daemon=True).start()
+    return True
+
+
 def _snapshot_authorized() -> bool:
     """Accept the site password as a bearer token or API-key header.
 
@@ -546,14 +569,19 @@ def api_snapshot():
 
     By default this refreshes any stale market data first (same as the browser's
     phase-2 call), so it can take a few seconds when the cache is cold.  Pass
-    ?cached=1 to return whatever is already in the cache without fetching.
+    ?cached=1 to return whatever is already in the cache without fetching;
+    add &warm=1 to also start a background refresh of stale prices so the
+    *next* call is fresh (the right mode for a dashboard polling every minute).
     ?sort=alpha|type|expiration overrides the configured sort order.
     """
     if not _snapshot_authorized():
         return jsonify({"error": "unauthorized"}), 401
 
-    if request.args.get("cached") not in ("1", "true", "yes"):
+    truthy = ("1", "true", "yes")
+    if request.args.get("cached") not in truthy:
         _cache.fetch_all(pos_repo.get_open_positions())
+    elif request.args.get("warm") in truthy:
+        _warm_cache_async()
 
     config = cfg_repo.load()
     sort = request.args.get("sort", config.get("SortOrder", "alpha"))
@@ -759,10 +787,20 @@ def api_update_position(row_id: int):
     d = request.get_json(silent=True)
     if not d:
         return jsonify({"error": "missing or invalid JSON body"}), 400
+    merge_after = bool(d.pop("merge_stock", False))
     _normalize_position_data(d)
     if d["portfolio_id"] is not None and pf_repo.get_portfolio(d["portfolio_id"]) is None:
         return jsonify({"error": "unknown portfolio"}), 400
     pos_repo.update_position(row_id, d)
+    if merge_after and d.get("option_type") == "STOCK":
+        # "Assigned" flow: the put just became long stock, so fold it into any
+        # existing STOCK position of the same symbol/portfolio right away —
+        # shares added, cost share-weight averaged, a covered row keeps its
+        # cover.  No-op when there is nothing to merge with.
+        saved = pos_repo.get_position(row_id)
+        if saved:
+            pos_repo.merge_stock_positions(saved.symbol, saved.expiration,
+                                           saved.strike or 0.0, saved.portfolio_id)
     symbol = d["symbol"]
     _cache.invalidate(symbol)
     threading.Thread(target=_prefetch_symbol, args=(symbol,), daemon=True).start()

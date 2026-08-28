@@ -12,6 +12,8 @@ Repository
      positions to the default.
   4. Positions inserted without a portfolio land in the default.
   5. Stock merges never cross portfolios.
+  5b. The "Assigned" flow (merge_stock=True on position update) folds the new
+      shares into an existing STOCK position: shares added, cost averaged.
 API
   6. CRUD round trip through /api/portfolios.
   7. /api/positions summary: per-portfolio rows plus the "All" aggregate,
@@ -45,6 +47,10 @@ def env(monkeypatch):
 
     import main_web
     monkeypatch.setattr(main_web, "_startup_prefetch", lambda: None)
+    # The snapshot X-Api-Key check compares against main_web._password, which
+    # was captured from MARGIN_PWD at import time — the real password when the
+    # test shell has it exported.  Pin it so the suite is environment-independent.
+    monkeypatch.setattr(main_web, "_password", "test")
     main_web.app.config["TESTING"] = True
     client = main_web.app.test_client()
     with client.session_transaction() as sess:
@@ -150,6 +156,39 @@ def test_merge_stays_within_portfolio(env):
     assert sum(r.long_shares for r in rows if r.portfolio_id == main.id) == 200
 
 
+def test_assigned_put_merges_into_existing_stock(env):
+    """PUT /api/positions/<id> with merge_stock=True (the web form's "Assigned"
+    flow) folds the new shares into an existing STOCK position of the same
+    symbol/portfolio: shares added, cost share-weight averaged."""
+    import repositories.positions_repository as pos_repo
+    client = env
+    # Existing long stock: 100 sh @ $50, and a naked put on the same symbol.
+    _post(client, "/api/positions",
+          _pos(symbol="NBIS", option_type="STOCK", strike=0, expiration=None,
+               quantity=0, long_shares=100, long_cost=50.0))
+    _post(client, "/api/positions", _pos(symbol="NBIS", strike=40))
+    put_id = max(p.id for p in pos_repo.get_open_positions())
+    # What the form sends after "Assigned" + Save: the put is now 100 sh @ $40.
+    r = _put(client, f"/api/positions/{put_id}",
+             _pos(symbol="NBIS", option_type="STOCK", strike=0, expiration=None,
+                  quantity=0, long_shares=100, long_cost=40.0, merge_stock=True))
+    assert r.status_code == 200, r.get_json()
+    rows = [p for p in pos_repo.get_open_positions() if p.symbol == "NBIS"]
+    assert len(rows) == 1
+    assert rows[0].long_shares == 200
+    assert rows[0].long_cost == pytest.approx(45.0)
+    # Without the flag, an ordinary edit does not merge.
+    _post(client, "/api/positions",
+          _pos(symbol="NBIS", option_type="STOCK", strike=0, expiration=None,
+               quantity=0, long_shares=100, long_cost=60.0))
+    new_id = max(p.id for p in pos_repo.get_open_positions())
+    r = _put(client, f"/api/positions/{new_id}",
+             _pos(symbol="NBIS", option_type="STOCK", strike=0, expiration=None,
+                  quantity=0, long_shares=100, long_cost=61.0))
+    assert r.status_code == 200
+    assert len([p for p in pos_repo.get_open_positions() if p.symbol == "NBIS"]) == 2
+
+
 # ---------------------------------------------------------------------------
 # API
 # ---------------------------------------------------------------------------
@@ -231,3 +270,45 @@ def test_position_add_edit_leave_default_alone(env):
     assert client.get(f"/api/positions/{pid}").get_json()["portfolio_id"] == main.id
     # unknown portfolio is refused
     assert _post(client, "/api/positions", _pos(portfolio_id=999)).status_code == 400
+
+
+def test_snapshot_warm_starts_background_refresh(env, monkeypatch):
+    """?cached=1&warm=1 answers from cache immediately and triggers one
+    background fetch_all; a second call while it runs does not start another."""
+    import threading
+    import main_web
+    started = []
+    gate = threading.Event()
+
+    def fake_fetch_all(positions):
+        started.append(len(positions))
+        gate.wait(2)
+
+    monkeypatch.setattr(main_web._cache, "fetch_all", fake_fetch_all)
+    client = env
+    hdr = {"X-Api-Key": "test"}
+    r = client.get("/api/snapshot?cached=1&warm=1", headers=hdr)
+    assert r.status_code == 200 and "summary" in r.get_json()
+    for _ in range(50):                      # thread start is asynchronous
+        if started:
+            break
+        threading.Event().wait(0.02)
+    assert started == [0]                    # one pass, for the (empty) book
+    client.get("/api/snapshot?cached=1&warm=1", headers=hdr)
+    assert started == [0]                    # still running -> not started again
+    gate.set()
+    for _ in range(50):
+        if main_web._warm_lock.acquire(blocking=False):
+            main_web._warm_lock.release()
+            break
+        threading.Event().wait(0.02)
+    client.get("/api/snapshot?cached=1&warm=1", headers=hdr)
+    for _ in range(50):
+        if len(started) == 2:
+            break
+        threading.Event().wait(0.02)
+    assert started == [0, 0]                 # finished -> a new pass can start
+    gate.set()
+    # plain cached=1 never fetches
+    client.get("/api/snapshot?cached=1", headers=hdr)
+    assert len(started) == 2

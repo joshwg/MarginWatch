@@ -324,9 +324,9 @@ def fetch_company_name(symbol: str) -> str | None:
 
 
 def bars_cache_ttl(interval: str) -> int:
-    """Seconds until a set of *interval* bars should be re-fetched: just past the
-    next bar boundary (option_lib.math_util.bars_cache_ttl), or an hour if
-    option_lib is missing."""
+    """Seconds until a set of *interval* bars should be re-fetched: ~17 min past
+    the next bar boundary, since the feeds are 15-minute delayed
+    (option_lib.math_util.bars_cache_ttl), or an hour if option_lib is missing."""
     try:
         from option_lib.math_util import bars_cache_ttl as _ttl
         return _ttl(interval)

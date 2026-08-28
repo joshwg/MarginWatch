@@ -8,6 +8,7 @@ let _sortKeys = [];
 const SORT_KEYS_STORAGE = 'mw.sortKeys';   // localStorage key (per device)
 const SORT_HOLD_MS = 450;                   // touch: press-and-hold to stack a sort key
 let _editId = null;    // null = adding new, number = editing existing
+let _assignedApplied = false;  // "Assigned" clicked in this edit — merge into existing stock on save
 let _posModal = null;
 let _confirmModal = null;
 let _progressPoller = null;    // interval handle for fetch-progress polling
@@ -1204,6 +1205,7 @@ function nextOptionFriday() {
 
 function openAddModal() {
     _editId = null;
+    _assignedApplied = false;
     _earningsDate = null;
     document.getElementById('positionModalTitle').textContent = 'Add Position';
     document.getElementById('positionForm').reset();
@@ -1235,6 +1237,7 @@ async function editPosition(id) {
     if (!resp.ok) return;
     const pos = await resp.json();
     _editId = id;
+    _assignedApplied = false;
 
     document.getElementById('positionModalTitle').textContent = 'Edit Position';
     fillPortfolioSelect(pos.portfolio_id ?? _defaultPortfolioId());
@@ -1269,6 +1272,11 @@ async function savePosition(e) {
         long_cost:   parseFloat(document.getElementById('fCost').value) || null,
         strike2: parseFloat(document.getElementById('fStrike2').value) || null,
     };
+    // Assigned flow: the server folds the new shares into any existing STOCK
+    // position of the same symbol/portfolio (shares added, cost averaged).
+    if (_editId && _assignedApplied && data.option_type === 'STOCK') {
+        data.merge_stock = true;
+    }
     const url    = _editId ? `/api/positions/${_editId}` : '/api/positions';
     const method = _editId ? 'PUT' : 'POST';
     try {
@@ -1329,7 +1337,10 @@ function updateFormFields() {
 }
 
 function applyAssigned() {
-    // PUT exercised: convert to long stock at the strike price
+    // PUT exercised: convert to long stock at the strike price.  On save the
+    // result is merged into an existing STOCK position of the same symbol,
+    // if there is one (see savePosition's merge_stock flag).
+    _assignedApplied = true;
     const strike = parseFloat(document.getElementById('fStrike').value) || 0;
     const qty    = parseInt(document.getElementById('fQty').value) || 1;
     document.getElementById('fType').value      = 'STOCK';

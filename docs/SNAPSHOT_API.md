@@ -32,6 +32,7 @@ A missing or wrong password returns `401 {"error": "unauthorized"}`.
 | Param | Values | Default | Meaning |
 |---|---|---|---|
 | `cached` | `1`, `true`, `yes` | off | Return whatever is already in the server's cache without fetching market data. Fast, but prices may be stale or `null` on a cold server. |
+| `warm` | `1`, `true`, `yes` | off | Only with `cached`: answer from the cache immediately **and** start a background refresh of any stale market data (at most one refresh runs at a time), so the *next* call returns fresh prices. The right mode for a dashboard that polls every minute and cannot wait several seconds for a cold fetch. |
 | `sort` | `alpha`, `type`, `expiration` | the sort order configured in the UI | Order of the `positions` array. `alpha` = symbol, then expiration, then strike; `type` = calls (incl. covered calls) → puts → everything else; `expiration` = soonest expiry first. |
 
 Without `cached`, the call first refreshes any expired market data (same work as
@@ -243,7 +244,7 @@ counted. Already-expired positions still appear, under their (past) week.
 - type: custom-api
   title: MarginWatch
   cache: 1m
-  url: https://margin.example.com/api/snapshot
+  url: https://margin.example.com/api/snapshot?cached=1&warm=1
   headers:
     Authorization: Bearer ${MARGIN_PWD}
   template: |

@@ -1,6 +1,11 @@
 /* MarginWatch web UI — supplemental styles on top of Bootstrap */
 
-.mw-app { max-width: 560px; overflow-x: clip; }
+/* One flat width cap; narrow side gutters (Bootstrap default is 12px/side).
+   Screen space goes to the table columns, not the margins.  No stepped caps:
+   an earlier 560px base cap still applied between 600 and 767px — exactly the
+   Fold 7 inner screen's reported width — pinning the app narrower than the
+   table and cutting columns off. */
+.mw-app { max-width: 1200px; overflow-x: clip; --bs-gutter-x: 0.5rem; }
 
 .mw-summary { min-width: 105px; }
 .mw-val { min-width: 58px; display: inline-block; text-align: right; }
@@ -134,9 +139,8 @@
 
 /* ── Responsive breakpoints ───────────────────────────────────────────────── */
 
-/* Cover screen portrait — full width, compact table */
+/* Cover screen portrait — compact table */
 @media (max-width: 599px) {
-    .mw-app { max-width: 100%; }
     #positionsTable { font-size: 0.78rem; }
 }
 
@@ -162,14 +166,24 @@
     .mw-row-btn:active { background-color: rgba(0, 0, 0, 0.15); }
 }
 
-/* Inner screen open / tablet — allow wider layout */
-@media (min-width: 768px) {
-    .mw-app { max-width: 820px; }
-}
-
-/* Fold inner screen portrait (984px) and wider */
-@media (min-width: 984px) {
-    .mw-app { max-width: 960px; }
+/* Mid widths (Fold 7 inner screen ~700px, small tablets): the 7d column is
+   visible here and the table's natural width (~775px+) overruns the screen,
+   so compact everything until it fits — smaller font, minimal cell padding,
+   narrower fixed columns.  The goal is every column visible with no sideways
+   scrolling.  (The Theta/θ-per-10k widths carry inline style attributes in
+   the template, hence the !important.) */
+@media (min-width: 600px) and (max-width: 899px) {
+    #positionsTable { font-size: 0.8rem; }
+    #positionsTable th, #positionsTable td {
+        padding-left: 2px;
+        padding-right: 2px;
+    }
+    #positionsTable .mw-sector-col { width: 58px; max-width: 58px; }
+    #positionsTable .mw-spark-col { width: 68px; min-width: 68px; }
+    #positionsTable thead th[data-col="theta"]      { width: 54px !important; }
+    #positionsTable thead th[data-col="theta_norm"] { width: 48px !important; }
+    .mw-actions-col { width: 72px; }
+    .mw-row-btn { min-width: 31px; margin: 0; }
 }
 
 /* Force row background through Bootstrap's table-bg variable */
