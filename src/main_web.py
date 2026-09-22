@@ -445,8 +445,7 @@ def _build_items(positions: list) -> tuple[list[dict], dict]:
             "opt_str": display["opt_str"],
             "theta_str": display["theta_str"],
             "theta_dollars": display["theta_dollars"],
-            "theta_norm": round(display["theta_dollars"] / display["margin"] * 10, 1)
-                          if display["theta_dollars"] is not None and display["margin"] else None,
+            "theta_norm": ps.theta_per_10k(display["theta_dollars"], display["margin"]),
             "is_stock_row": display["is_stock_row"],
             "is_profitable": display["is_profitable"],
             "delta": display["delta"],
@@ -636,8 +635,7 @@ def api_prices():
             "opt_str":       display["opt_str"],
             "theta_str":     display["theta_str"],
             "theta_dollars": display["theta_dollars"],
-            "theta_norm":    round(display["theta_dollars"] / display["margin"] * 10, 1)
-                             if display["theta_dollars"] is not None and display["margin"] else None,
+            "theta_norm":    ps.theta_per_10k(display["theta_dollars"], display["margin"]),
             "is_profitable":  display["is_profitable"],
             "delta":          display["delta"],
             "after_earnings": display["after_earnings"],
@@ -734,6 +732,14 @@ def api_fetch_progress():
 @app.route("/api/refresh", methods=["POST"])
 def api_refresh():
     _cache.__init__()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/refresh-prices", methods=["POST"])
+def api_refresh_prices():
+    """Light refresh for the client's 15-minute auto-update: the next price
+    pull re-fetches prices and greeks, but bars/sector/earnings caches stay."""
+    _cache.refresh_priced_state()
     return jsonify({"ok": True})
 
 
@@ -922,7 +928,7 @@ def api_delete_portfolio(pid: int):
 # Export
 # ---------------------------------------------------------------------------
 
-_EXPORT_HEADERS = ["Portfolio", "Position", "Price", "Margin ($k)", "Qty", "Position Theta ($)", "Expiration", "Per-Share Theta"]
+_EXPORT_HEADERS = ["Portfolio", "Position", "Price", "Margin ($k)", "Qty", "Position Theta ($)", "Expiration", "θ/10k"]
 
 
 @app.route("/export")
@@ -980,6 +986,12 @@ def export_xlsx():
     )
 
 
+def _t10k_cell(td, margin_k):
+    """θ/10k as a cell value: the figure, or an empty cell when unpriceable."""
+    v = ps.theta_per_10k(td, margin_k)
+    return "" if v is None else v
+
+
 def _build_csv_rows(positions: list) -> list[list]:
     names = {pf.id: pf.name for pf in pf_repo.list_portfolios()}
     rows = []
@@ -991,18 +1003,20 @@ def _build_csv_rows(positions: list) -> list[list]:
             stock_label = f"{pos.symbol} stock ({pos.long_shares or 0} sh)"
             stock_margin = round(ps.margin_k(pos), 2)
             if ps.has_covered_call(pos):
-                rows.append([stock_label, gf, stock_margin, pos.long_shares or 0, "", "", ""])
                 key = (pos.symbol, pos.expiration, pos.strike, "CALL")
                 raw_theta = _cache.theta(key)
-                theta_dollars = round(-raw_theta * pos.quantity * 100, 2) if raw_theta is not None else ""
+                td = -raw_theta * pos.quantity * 100 if raw_theta is not None else None
+                # θ/10k rides on the row that carries the position's margin.
+                rows.append([stock_label, gf, stock_margin, pos.long_shares or 0, "", "",
+                             _t10k_cell(td, stock_margin)])
                 rows.append([
                     ps.position_abbrev(pos),
                     gf,
                     0,
                     pos.quantity,
-                    theta_dollars,
+                    round(td, 2) if td is not None else "",
                     pos.expiration or "",
-                    round(raw_theta, 4) if raw_theta is not None else "",
+                    "",
                 ])
             else:
                 rows.append([stock_label, gf, stock_margin, pos.long_shares or 0, "", "", ""])
@@ -1013,17 +1027,21 @@ def _build_csv_rows(positions: list) -> list[list]:
             call_theta = _cache.theta(call_key)
             put_theta  = _cache.theta(put_key)
             call_abbrev, put_abbrev = ps.straddle_leg_abbrevs(pos)
+            margin = round(ps.margin_k(pos), 2)
+            # Position theta is whatever legs have priced, same as the table.
+            leg_tds = [-t * pos.quantity * 100 for t in (call_theta, put_theta) if t is not None]
+            total_td = sum(leg_tds) if leg_tds else None
             rows.append([
-                call_abbrev, gf, round(ps.margin_k(pos), 2), pos.quantity,
+                call_abbrev, gf, margin, pos.quantity,
                 round(-call_theta * pos.quantity * 100, 2) if call_theta is not None else "",
                 pos.expiration or "",
-                round(call_theta, 4) if call_theta is not None else "",
+                _t10k_cell(total_td, margin),
             ])
             rows.append([
                 put_abbrev, gf, 0, pos.quantity,
                 round(-put_theta * pos.quantity * 100, 2) if put_theta is not None else "",
                 pos.expiration or "",
-                round(put_theta, 4) if put_theta is not None else "",
+                "",
             ])
         elif ps.is_spread(pos):
             ot = ps.pricing_option_type(pos)
@@ -1034,13 +1052,14 @@ def _build_csv_rows(positions: list) -> list[list]:
             short_abbrev, long_abbrev = ps.spread_leg_abbrevs(pos)
             short_td = round(-short_theta * pos.quantity * 100, 2) if short_theta is not None else ""
             long_td  = round(long_theta  * pos.quantity * 100, 2) if long_theta  is not None else ""
+            margin = round(ps.margin_k(pos), 2)
             rows.append([
                 short_abbrev, gf,
-                round(ps.margin_k(pos), 2),
+                margin,
                 pos.quantity,
                 short_td,
                 pos.expiration or "",
-                round(short_theta, 4) if short_theta is not None else "",
+                _t10k_cell(ps.theta_dollars(pos, short_theta, long_theta), margin),
             ])
             rows.append([
                 long_abbrev, gf,
@@ -1048,21 +1067,22 @@ def _build_csv_rows(positions: list) -> list[list]:
                 pos.quantity,
                 long_td,
                 pos.expiration or "",
-                round(long_theta, 4) if long_theta is not None else "",
+                "",
             ])
         else:
             ot = ps.pricing_option_type(pos)
             key = (pos.symbol, pos.expiration, pos.strike, ot)
             raw_theta = _cache.theta(key) if pos.strike else None
-            theta_dollars = round(-raw_theta * pos.quantity * 100, 2) if raw_theta is not None else ""
+            td = ps.theta_dollars(pos, raw_theta)
+            margin = round(ps.margin_k(pos), 2)
             rows.append([
                 ps.position_abbrev(pos),
                 gf,
-                round(ps.margin_k(pos), 2),
+                margin,
                 pos.quantity,
-                theta_dollars,
+                round(td, 2) if td is not None else "",
                 pos.expiration or "",
-                round(raw_theta, 4) if raw_theta is not None else "",
+                _t10k_cell(td, margin),
             ])
         for i in range(rows_before, len(rows)):
             rows[i].insert(0, pf_name)

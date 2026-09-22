@@ -7,6 +7,8 @@ let _positions = [];
 let _sortKeys = [];
 const SORT_KEYS_STORAGE = 'mw.sortKeys';   // localStorage key (per device)
 const SORT_HOLD_MS = 450;                   // touch: press-and-hold to stack a sort key
+const AUTO_REFRESH_MS = 15 * 60 * 1000;   // auto price update cadence during market hours
+let _autoRefreshTimer = null;             // setTimeout handle for the next auto update
 let _editId = null;    // null = adding new, number = editing existing
 let _assignedApplied = false;  // "Assigned" clicked in this edit — merge into existing stock on save
 let _posModal = null;
@@ -42,6 +44,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     await loadConfig();
     await loadPortfolios();
     loadPositions();
+    _scheduleAutoRefresh();
 
     _loadSortKeys();
     updateColHeaders();
@@ -209,6 +212,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 // ---------------------------------------------------------------------------
 
 async function refreshPrices() {
+    // A manual refresh restarts the 15-minute auto-update clock — the data is
+    // fresh now, so the next automatic pull is due a full interval from here.
+    _scheduleAutoRefresh();
     const btn = document.getElementById('btnRefresh');
     btn.disabled = true;
     try {
@@ -216,6 +222,46 @@ async function refreshPrices() {
         await loadPositions();
     } finally {
         btn.disabled = false;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Auto refresh: every 15 minutes during market hours
+// ---------------------------------------------------------------------------
+
+/** True during the regular US equity session: 9:30–16:00 ET, Mon–Fri.
+ *  Holidays are not tracked (neither does the server) — a refresh on a market
+ *  holiday just re-fetches unchanged data. */
+function _isMarketHours() {
+    const et = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+    const day = et.getDay();                       // 0=Sun … 6=Sat
+    if (day === 0 || day === 6) return false;
+    const mins = et.getHours() * 60 + et.getMinutes();
+    return mins >= 9 * 60 + 30 && mins < 16 * 60;
+}
+
+/** (Re)arm the next auto update, AUTO_REFRESH_MS from now.  Called at start-up
+ *  and by every manual refresh, so a manual pull pushes the next automatic one
+ *  a full interval out instead of doubling up. */
+function _scheduleAutoRefresh() {
+    if (_autoRefreshTimer) clearTimeout(_autoRefreshTimer);
+    _autoRefreshTimer = setTimeout(_autoRefreshTick, AUTO_REFRESH_MS);
+}
+
+async function _autoRefreshTick() {
+    _scheduleAutoRefresh();   // keep the chain alive on every path below
+    // Skip quietly outside market hours, when the tab is hidden (the phone in
+    // a pocket should not burn provider calls), or while a pull the user
+    // started is still running — the next tick catches up.
+    if (!_isMarketHours() || document.hidden || _loadCtrl) return;
+    try {
+        // Lighter than the manual /api/refresh: re-prices stocks and options
+        // but keeps the bars/sector/earnings caches, which do not move with
+        // the price (bars roll over on their own schedule).
+        await fetch('/api/refresh-prices', { method: 'POST' });
+        await loadPositions();
+    } catch (e) {
+        console.error('[MarginWatch] auto refresh failed:', e);
     }
 }
 

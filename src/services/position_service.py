@@ -103,6 +103,19 @@ def theta_dollars(pos: Position, theta, long_theta=None) -> float | None:
     return short_gain
 
 
+def theta_per_10k(theta_dollars_val, margin_k_val) -> float | None:
+    """Daily theta dollars per $10,000 of margin, or None.
+
+    The θ/10k column: how hard each position's margin is working.  Takes the
+    position's total theta ($/day) and its margin in $k — the same inputs the
+    web table, CSV and xlsx exports all carry — so every surface shows the
+    identical figure.
+    """
+    if theta_dollars_val is None or not margin_k_val:
+        return None
+    return round(theta_dollars_val / margin_k_val * 10, 1)
+
+
 def is_profitable(pos: Position, price) -> bool:
     """True when a STOCK position's current price exceeds its cost basis."""
     return (

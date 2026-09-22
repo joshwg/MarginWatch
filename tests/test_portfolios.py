@@ -189,6 +189,40 @@ def test_assigned_put_merges_into_existing_stock(env):
     assert len([p for p in pos_repo.get_open_positions() if p.symbol == "NBIS"]) == 2
 
 
+def test_export_theta_per_10k_column(env, monkeypatch):
+    """Both exports carry θ/10k (position theta per $10k of margin) where the
+    Per-Share Theta column used to be, matching the web table's figure."""
+    import main_web
+    import repositories.positions_repository as pos_repo
+    import services.export_service as export_service
+    import services.position_service as ps
+    from services.cache_service import CacheService
+
+    pos_repo.insert_position(_pos(symbol="NBIS", strike=40, quantity=2))
+    positions = pos_repo.get_open_positions()
+    put = positions[0]
+
+    cache = CacheService()
+    cache._theta[(put.symbol, put.expiration, put.strike, "PUT")] = -0.05  # → $10/day
+
+    wb, n = export_service.build_workbook(positions, cache)
+    ws = wb.active
+    header = [c.value for c in ws[1]]
+    assert header[5] == "θ/10k"
+    assert "Per-Share Theta" not in header
+    margin, td, t10k = (lambda r: (r[1], r[3], r[5]))([c.value for c in ws[2]])
+    assert td == 10.0
+    assert margin > 0
+    assert t10k == ps.theta_per_10k(td, margin) == round(td / margin * 10, 1)
+
+    monkeypatch.setattr(main_web, "_cache", cache)
+    assert main_web._EXPORT_HEADERS[-1] == "θ/10k"
+    row = main_web._build_csv_rows(positions)[0]
+    # Portfolio, Position, Price, Margin, Qty, PosTheta, Expiration, θ/10k
+    assert row[5] == 10.0
+    assert row[7] == ps.theta_per_10k(10.0, row[3])
+
+
 # ---------------------------------------------------------------------------
 # API
 # ---------------------------------------------------------------------------

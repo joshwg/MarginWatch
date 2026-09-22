@@ -126,6 +126,18 @@ class CacheService:
         self._theta.clear()
         self._delta.clear()
 
+    def refresh_priced_state(self) -> None:
+        """Drop prices and greeks so the next pull re-prices every position.
+
+        The light refresh behind the 15-minute auto-update: option greeks have
+        no TTL (see _fetch_greeks), so without this they would stay stale for a
+        whole session.  Display-only data that does not move with the price —
+        bars, sector, earnings, company names — is kept, unlike the full reset
+        behind the manual /api/refresh.
+        """
+        with self._session_lock:
+            self._clear_priced_state()
+
     def invalidate(self, symbol: str) -> None:
         """Drop all cached data for *symbol* so the next fetch is fresh."""
         with self._symbol_lock(symbol):
