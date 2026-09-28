@@ -292,6 +292,24 @@ def favicon():
 # Main page
 # ---------------------------------------------------------------------------
 
+@app.context_processor
+def _static_version():
+    """Cache-busting URLs for our static files.
+
+    Browsers heuristically cache /static/app.js & co. without revalidating —
+    Chrome kept serving week-old copies after deploys.  Stamping the file's
+    mtime into the URL makes every upload a brand-new URL, so a plain refresh
+    always gets the current file while unchanged files stay cached forever.
+    """
+    def static_v(filename: str) -> str:
+        try:
+            v = int(os.path.getmtime(os.path.join(app.static_folder, filename)))
+        except OSError:
+            v = 0
+        return f"/static/{filename}?v={v}"
+    return {"static_v": static_v}
+
+
 @app.route("/")
 def index():
     return render_template("index.html", version=constants.__version__)

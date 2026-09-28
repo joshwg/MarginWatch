@@ -20,7 +20,7 @@ NO_EXPIRATION = "9999-12-31"
 # ---------------------------------------------------------------------------
 
 WEB_PORT = 5000
-SESSION_TIMEOUT_MINUTES = 240  # 4 hours of inactivity logs the user out
+SESSION_TIMEOUT_MINUTES = 480  # 8 hours of inactivity logs the user out
 
 # ---------------------------------------------------------------------------
 # Expiry row background colors

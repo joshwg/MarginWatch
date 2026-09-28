@@ -34,6 +34,9 @@ const MODAL_FOCUS_DELAY_MS = 300;
 /** Draw a thick rule beneath every Nth row to aid counting */
 const ROW_RULE_INTERVAL = 5;
 
+/** Every Nth row gets a double-wide rule instead, marking bigger blocks */
+const ROW_RULE_MAJOR_INTERVAL = 30;
+
 // ── Tooltip positioning (px) ─────────────────────────────────────────────────
 
 /** Horizontal gap between the cursor/touch point and the tooltip edge */

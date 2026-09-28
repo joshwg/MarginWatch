@@ -1,5 +1,15 @@
 'use strict';
 
+// iPadOS reports itself as "Macintosh" in the UA, so no CSS media query can
+// single out an iPad — but a real Mac has zero touch points, which makes
+// Macintosh-with-touch the one reliable tell (older iPads still say "iPad").
+// The class gates the iPad-only table gutter in style.css; Android phones
+// (the Fold, which needs every pixel of width) never match.
+if (/iPad/.test(navigator.userAgent) ||
+    (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1)) {
+    document.documentElement.classList.add('mw-ipad');
+}
+
 let _positions = [];
 // Multi-column sort: ordered chain of { col, dir } — index 0 is the primary
 // key, each later entry breaks ties in the one before it.  Empty means "the
@@ -174,6 +184,29 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     document.getElementById('confirmModal').addEventListener('hide.bs.modal', () => {
         if (document.activeElement?.closest('#confirmModal')) document.activeElement.blur();
+    });
+
+    // position:fixed pins a modal to the *layout* viewport, so on a
+    // pinch-zoomed phone the confirm dialog can open partly or wholly outside
+    // the visible (visual) viewport — a Delete tap then looks like it did
+    // nothing.  Once Bootstrap has shown it, move the dialog into the region
+    // the user is actually looking at.  Untouched when not zoomed in.
+    const confirmEl = document.getElementById('confirmModal');
+    confirmEl.addEventListener('shown.bs.modal', () => {
+        const vv = window.visualViewport;
+        if (!vv || (vv.scale <= 1.01 && vv.offsetLeft < 1 && vv.offsetTop < 1)) return;
+        const dlg = confirmEl.querySelector('.modal-dialog');
+        dlg.style.position = 'absolute';
+        dlg.style.margin = '0';
+        // Centered horizontally in the visible region; left-aligned to it when
+        // the zoom is so deep the dialog no longer fits.  Vertically in the
+        // upper third, clear of where a thumb usually rests.
+        dlg.style.left = vv.offsetLeft + Math.max(0, (vv.width - dlg.offsetWidth) / 2) + 'px';
+        dlg.style.top  = vv.offsetTop  + Math.max(8, Math.min((vv.height - dlg.offsetHeight) / 3, 120)) + 'px';
+    });
+    confirmEl.addEventListener('hidden.bs.modal', () => {
+        const dlg = confirmEl.querySelector('.modal-dialog');
+        dlg.style.position = dlg.style.margin = dlg.style.left = dlg.style.top = '';
     });
 
     document.getElementById('fetchErrorDismiss').addEventListener('click', () => {
@@ -607,7 +640,8 @@ function renderTable() {
 
     for (const [i, pos] of items.entries()) {
         const tr = document.createElement('tr');
-        if ((i + 1) % ROW_RULE_INTERVAL === 0) tr.classList.add('mw-row-rule');
+        if ((i + 1) % ROW_RULE_MAJOR_INTERVAL === 0) tr.classList.add('mw-row-rule-major');
+        else if ((i + 1) % ROW_RULE_INTERVAL === 0) tr.classList.add('mw-row-rule');
         tr.style.backgroundColor = pos.bg;
         tr.style.color = pos.fg;
 

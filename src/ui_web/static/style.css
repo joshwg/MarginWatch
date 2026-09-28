@@ -83,6 +83,14 @@
 /* Table scroll container — fixed height */
 .mw-table-wrap { height: 1000px; min-height: 200px; overflow-y: auto; overflow-x: auto; }
 
+/* iPad only (.mw-ipad set by app.js — iPadOS hides behind a Mac UA, so no
+   media query can target it): the table deliberately swallows touch drags
+   (row taps, long-press tooltips, no text selection), which leaves an
+   edge-to-edge table with nothing to grab to scroll the page.  A gutter
+   around the table is plain page the finger can pan.  The Fold, which needs
+   every pixel of width, is Android and never gets the class. */
+.mw-ipad .mw-table-wrap { margin: 8px 36px 16px; }
+
 /* Top bar wraps on narrow screens so buttons drop to a second line */
 .mw-top-bar { flex-wrap: wrap; }
 
@@ -279,8 +287,9 @@
 /* Negative available margin */
 .mw-danger { color: #dc3545 !important; font-weight: 700; }
 
-/* Thick rule every 5 rows */
+/* Thick rule every 5 rows; a double-wide one every 30 marks the big blocks */
 #positionsTable tbody tr.mw-row-rule td { border-bottom: 2px solid #000 !important; }
+#positionsTable tbody tr.mw-row-rule-major td { border-bottom: 4px solid #000 !important; }
 
 /* Position detail tooltip (hover / long-press) */
 .mw-pos-tooltip {
